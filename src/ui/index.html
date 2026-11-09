@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>p2p-swarm</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand"><span class="mark" aria-hidden="true"></span>p2p<b>swarm</b></div>
+    <button id="btn-join" class="primary">+ Add swarm link</button>
+    <button id="btn-create">New swarm</button>
+    <button id="btn-post">Post job</button>
+    <span class="grow"></span>
+    <button id="btn-nick" class="ghost" title="Change nickname"></button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="side-title">Swarms</div>
+      <nav id="swarm-list"></nav>
+      <div class="side-title">Discover</div>
+      <nav id="discover-list"></nav>
+    </aside>
+
+    <main id="main"></main>
+  </div>
+
+  <footer class="statusbar" id="statusbar"></footer>
+
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
