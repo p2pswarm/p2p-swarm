@@ -14,7 +14,8 @@ const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
-  '/app.css': ['app.css', 'text/css; charset=utf-8']
+  '/app.css': ['app.css', 'text/css; charset=utf-8'],
+  '/logo.svg': ['logo.svg', 'image/svg+xml']
 }
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 const MAX_BODY = 2 * 1024 * 1024

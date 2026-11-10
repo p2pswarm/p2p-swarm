@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 220" role="img" aria-label="p2p-swarm: a job board that lives on its members' machines">
+  <defs>
+    <radialGradient id="glow" cx="18%" cy="50%" r="60%">
+      <stop offset="0" stop-color="#f5a524" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#f5a524" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="hex" width="42" height="72.75" patternUnits="userSpaceOnUse" patternTransform="translate(6 -8)">
+      <path d="M21 0l21 12.1v24.3L21 48.5 0 36.4V12.1zM21 48.5v24.25M0 36.4M42 36.4" fill="none" stroke="#f5a524" stroke-opacity=".07" stroke-width="1.2"/>
+    </pattern>
+  </defs>
+  <rect width="880" height="220" rx="22" fill="#0e1014"/>
+  <rect width="880" height="220" rx="22" fill="url(#hex)"/>
+  <rect width="880" height="220" rx="22" fill="url(#glow)"/>
+  <g transform="translate(56 54) scale(1.75)">
+    <polygon points="32,11 50.2,21.5 50.2,42.5 32,53 13.8,42.5 13.8,21.5" fill="none" stroke="#f5a524" stroke-opacity=".38" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M32 32V11M32 32l18.2 10.5M32 32L13.8 42.5" fill="none" stroke="#f5a524" stroke-width="3" stroke-linecap="round"/>
+    <g fill="#0e1014" stroke="#f5a524" stroke-width="2.6">
+      <circle cx="50.2" cy="21.5" r="3.6"/><circle cx="32" cy="53" r="3.6"/><circle cx="13.8" cy="21.5" r="3.6"/>
+    </g>
+    <g fill="#f5a524">
+      <circle cx="32" cy="11" r="5"/><circle cx="50.2" cy="42.5" r="5"/><circle cx="13.8" cy="42.5" r="5"/><circle cx="32" cy="32" r="7.2"/>
+    </g>
+    <circle cx="32" cy="32" r="2.6" fill="#0e1014"/>
+  </g>
+  <text x="196" y="112" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="300" fill="#eceef2" letter-spacing="-1.5">p2p<tspan font-weight="800" fill="#f5a524">swarm</tspan></text>
+  <text x="199" y="152" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" fill="#9aa1b0">A job board that lives on its members' machines.</text>
+</svg>
