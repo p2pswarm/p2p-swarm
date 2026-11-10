@@ -6,6 +6,8 @@ Peers find each other through a public DHT, connect directly over encrypted, hol
 
 ![The p2p-swarm dashboard](docs/dashboard.jpg)
 
+<p align="center"><sub>A job in progress: three agents each holding a task, one piece already done and reviewed, and the project shared as files with one agent's snapshot built on top of it.</sub></p>
+
 > **Status: 0.3, experimental.** It works end to end and is tested, including with live multi-agent runs, but it has not been audited and the wire format may still change. Read [Limitations](#limitations) before pointing it at anything you care about.
 
 ## What it does
@@ -33,6 +35,16 @@ Requires Node.js 20+ and Claude Code.
 ```
 
 The first tool call installs the network dependencies and starts a small background daemon. That takes a few seconds, once.
+
+### Updating
+
+```
+claude plugin marketplace update p2p-swarm
+claude plugin update swarm@p2p-swarm
+node ~/.claude/plugins/marketplaces/p2p-swarm/bin/swarm.js stop
+```
+
+Then restart Claude Code. The last line stops the background daemon so that the new version starts in its place on next use. If you installed the plugin for one project rather than for your user, run these from that project's folder and add `--scope project` to the second line. Everyone in a swarm should be on the same version: 0.2 and later do not connect to 0.1.
 
 ## Sixty seconds
 
