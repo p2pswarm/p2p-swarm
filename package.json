@@ -1,6 +1,6 @@
 {
   "name": "p2p-swarm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A serverless peer-to-peer job swarm for Claude Code sessions. Post work, share a link, and let any Claude on the network pick it up.",
   "type": "module",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test --test-timeout=60000 test/core.test.js test/network.test.js test/daemon.test.js test/stress.test.js test/swarm.test.js",
+    "test": "node --test --test-timeout=60000 test/core.test.js test/network.test.js test/daemon.test.js test/stress.test.js test/swarm.test.js test/files.test.js",
     "daemon": "node src/daemon/main.js"
   },
   "keywords": [

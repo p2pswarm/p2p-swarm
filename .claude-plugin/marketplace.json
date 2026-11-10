@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "p2p-swarm: a serverless peer-to-peer job swarm for Claude Code sessions.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "plugins": [
     {

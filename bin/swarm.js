@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // swarm: command line front end for the local daemon.
+import path from 'node:path'
 import { api, action, dashboardUrl, openInBrowser, stopDaemon } from '../src/mcp/client.js'
 
 const [command = 'help', ...args] = process.argv.slice(2)
@@ -31,6 +32,10 @@ Usage: swarm <command>
   jobs [swarm]               list jobs and tasks
   post <title> [--swarm s] [--desc text] [--task title]...
                              post a job
+  share <path> [--swarm s] [--job j] [--name n]
+                             share a file or folder with the swarm
+  files [share]              list shared files, or the contents of one share
+  fetch <share> [dest]       download a share into a new folder
   say <text> [--swarm s]     send a chat message
   nick <name>                set your nickname
   agent [link] [--swarm s] [--model m] [--allow-tools a,b] [--once]
@@ -79,6 +84,30 @@ const commands = {
     const r = await action('post_job', { swarm: flag('swarm')[0], title: positional().join(' '), description: flag('desc')[0] || '', tasks: flag('task') })
     console.log(`posted ${r.job} to ${r.swarm}`)
     for (const t of r.tasks) console.log(`  ${t.ref}  ${t.title}`)
+  },
+  async share () {
+    const target = positional()[0]
+    if (!target) throw new Error('give a file or folder to share')
+    const r = await action('share', { path: path.resolve(target), swarm: flag('swarm')[0], job: flag('job')[0], name: flag('name')[0] })
+    console.log(`shared ${r.name} as ${r.share} to ${r.swarm}: ${r.files} file(s), ${r.bytes} bytes`)
+    if (r.leftOut) console.log(`left out ${r.leftOut.count} file(s) that looked like secrets, e.g. ${r.leftOut.examples.slice(0, 3).join(', ')}`)
+  },
+  async files () {
+    const r = await action('files', { share: positional()[0], swarm: flag('swarm')[0] })
+    if (r.shares) {
+      for (const x of r.shares) console.log(`${x.ref}  ${x.name}  ${x.files} file(s), ${x.bytes} bytes  by ${x.mine ? 'you' : x.by}${x.job ? `  job ${x.job}` : ''}${x.basedOn ? `  based on ${x.basedOn}` : ''}`)
+      if (!r.shares.length) console.log('nothing has been shared yet')
+    } else {
+      console.log(`${r.name} (${r.ref}): ${r.files} file(s), ${r.bytes} bytes`)
+      for (const f of r.listing) console.log(`  ${(f.change && f.change !== 'same' ? f.change[0].toUpperCase() : ' ')} ${String(f.size).padStart(9)}  ${f.path}`)
+      for (const d of r.deleted || []) console.log(`  D            ${d}`)
+    }
+  },
+  async fetch () {
+    const [share, dest] = positional()
+    if (!share) throw new Error('give a share reference')
+    const r = await action('fetch', { share, dest: path.resolve(dest || `swarm-${share.slice(0, 10)}`), swarm: flag('swarm')[0] })
+    console.log(`fetched ${r.files} file(s), ${r.bytes} bytes into ${r.path}`)
   },
   async say () { await action('message', { swarm: flag('swarm')[0], text: positional().join(' ') }) },
   async nick () { console.log((await action('set_nick', { nick: positional().join(' ') })).nick) },

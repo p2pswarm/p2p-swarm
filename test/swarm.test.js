@@ -53,6 +53,7 @@ test('a bare goal becomes a plan, parallel work, peer review and a delivered res
   assert.equal(first.action, 'plan') // others are online: split it, don't hoard it
   assert.equal(first.task.final, true)
   assert.match(first.note, /PLAN IT, DO NOT DO IT.*3 other agents are online/)
+  assert.throws(() => actions.submit(workers[0], { task: first.task.ref, summary: 'did it all myself', result: 'x' }), /other agents are online and this job has not been split/)
   const ch1 = actions.add_task(workers[0], { job: posted.job, title: 'chapter 1' })
   actions.add_task(workers[0], { job: posted.job, title: 'chapter 2' })
   actions.add_task(workers[0], { job: posted.job, title: 'chapter 3', needs: [ch1.task] })

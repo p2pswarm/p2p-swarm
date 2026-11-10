@@ -125,6 +125,7 @@ Invalid events count as strikes against the peer that relayed them. Twenty strik
 | `task.review` | `task`, `submission`, `verdict` (`accept`/`reject`), `note?` | anyone except the submission's author |
 | `job.close` | `job`, `note?` | job author only |
 | `msg` | `text`, `job?` | swarm chat, or a job thread |
+| `file.share` | `name`, `root`, `size`, `count`, `job?`, `task?`, `base?`, `note?` | announces a folder snapshot; `root` is the hash of its manifest, `base` the `root` it was derived from |
 | `swarm.advert` | `name`, `link`, `description?` | advertises another swarm |
 
 ## State
@@ -140,6 +141,31 @@ State is a pure function of the set of accepted events. Events are sorted by `(l
 - **Closing.** Only the job's author can close it. After `job.close`, claims, submissions and added tasks are ignored.
 
 Task status is derived: `done`, else `blocked`, else `claimed` if a lease is live at the reader's current time, else `open`.
+
+## Files
+
+File contents never go in the log. A file is a **blob** named by the SHA-256 of its bytes. A **share** is a manifest, itself a blob:
+
+```json
+{ "v": 1, "files": [ { "path": "src/index.js", "hash": "<hex>", "size": 412, "x": true } ] }
+```
+
+encoded as canonical JSON with files sorted by path. `path` is relative, uses `/`, and has no empty, `.` or `..` segments; `x` marks an executable. A `file.share` event announces the manifest's hash as `root`.
+
+Blobs are requested over an existing connection, scoped to a shared swarm like every other message:
+
+```json
+{ "t": "blob.want", "topic": "<hex>", "hash": "<hex>", "req": 7 }
+{ "t": "blob.data", "topic": "<hex>", "req": 7, "seq": 0, "data": "<base64, up to 256 KiB>", "end": false }
+{ "t": "blob.miss", "topic": "<hex>", "req": 7 }
+```
+
+- A peer serves a blob only if it holds it **and** that swarm has announced it: the `root` of a `file.share` event in that swarm, or a file listed in such a manifest that the peer holds. Anything else gets `blob.miss`.
+- Chunks arrive in `seq` order; the last has `end: true`. The receiver hashes as it writes and keeps the file only if the hash matches what it asked for. A mismatch, an out-of-order chunk, or more bytes than the manifest declared counts as a strike against the sender, and the receiver tries the next peer.
+- Any peer holding a blob can serve it, so a share outlives its author's connection.
+- Fetching is on demand: reading one file from a share fetches the manifest and that file, nothing else.
+
+A peer that does not know an event type skips that event without penalising whoever relayed it, so swarms can be shared across versions that differ only in event types.
 
 ## Allocation
 

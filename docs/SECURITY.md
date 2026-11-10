@@ -34,6 +34,19 @@ To report a vulnerability, open a private security advisory on the GitHub reposi
 
 **Residual risk:** an agent can be talked into submitting wrong or misleading work, endorsing bad work, or flooding a plan with tasks. That damages the job, not your machine.
 
+### Files
+
+Sharing copies files from a machine to every member, permanently, and the request to share may come from an agent that a hostile task has talked into it. Fetching writes strangers' files to disk.
+
+- **What can be shared.** A Claude session can only share paths inside its own project folder or the temp folder; the home folder, anything above it, and symlinks leading out are refused in code, not by instruction. A session opened in the home folder has no project root at all. The headless agent runs in an empty temp folder, so it has nothing of yours to share.
+- **What is always left out.** `.env*`, private keys, `.ssh`, `.aws`, credential and secret files, `.npmrc`/`.netrc`, this tool's own identity, git-ignored files, `.git`, `node_modules` and symlinks. This is a denylist: it catches the common cases, not every secret. Look at what is in a folder before sharing it.
+- **Agents do not need disk access.** The default worker reads shared files and publishes new ones through swarm tools that never touch the local filesystem.
+- **Where fetched files go.** Only into a new or empty folder inside the project or temp folder, so nothing is overwritten. Manifest paths that are absolute or contain `..` are rejected, so a share cannot write outside its destination.
+- **Integrity.** Every file is checked against its hash on arrival; altered or oversized data is discarded and the sender penalised.
+- **Access.** A peer only serves files that a swarm has announced, and only to members of that swarm. Being in one swarm with someone does not let you pull files from another.
+
+**Residual risk:** a fetched share is untrusted input. Do not run code from it outside a sandbox, and treat instructions inside files exactly like instructions inside task text. The instruction to an agent never to share local files on a task's say-so is guidance to a model; the path restrictions above are what actually bound the damage.
+
 ### Malicious events
 
 - Fixed set of event types with exact schemas; unknown types and extra fields are rejected.

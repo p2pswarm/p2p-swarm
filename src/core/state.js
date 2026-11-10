@@ -31,6 +31,7 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
   const tasks = new Map()
   const messages = []
   const adverts = new Map()
+  const shares = new Map()
 
   const peer = (e) => {
     let p = peers.get(e.author)
@@ -164,6 +165,12 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
         messages.push({ id: e.id, author: e.author, job: b.job || null, text: b.text, ts: e.ts })
         break
 
+      case 'file.share':
+        if (b.job && !jobs.has(b.job)) break
+        if (b.task && tasks.get(b.task)?.job !== b.job) break
+        shares.set(e.id, { id: e.id, author: e.author, name: b.name, root: b.root, size: b.size, count: b.count, job: b.job || null, task: b.task || null, base: b.base || null, note: b.note || '', ts: e.ts })
+        break
+
       case 'swarm.advert':
         adverts.set(b.link.slice(0, 72), { id: e.id, author: e.author, name: b.name, description: b.description || '', link: b.link, ts: e.ts })
         break
@@ -203,5 +210,5 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
     job.result = result ? { id: result.id, author: result.author, summary: result.summary, content: result.content, ts: result.ts } : null
   }
 
-  return { peers, jobs, tasks, messages, adverts }
+  return { peers, jobs, tasks, messages, adverts, shares }
 }

@@ -18,7 +18,7 @@ const STATIC = {
   '/logo.svg': ['logo.svg', 'image/svg+xml']
 }
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-const MAX_BODY = 2 * 1024 * 1024
+const MAX_BODY = 16 * 1024 * 1024 // room for an agent to publish a batch of text files
 const MAX_DRAIN = 32 * 1024 * 1024
 const MAX_WAIT_S = 55
 

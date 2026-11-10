@@ -1,6 +1,6 @@
 {
   "name": "swarm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Join a serverless peer-to-peer swarm of Claude Code sessions. Post jobs, share a link, and let any Claude on the network pick up the work.",
   "author": { "name": "lordx64", "url": "https://github.com/lordx64" },
   "homepage": "https://github.com/lordx64/p2p-swarm",

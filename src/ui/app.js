@@ -264,6 +264,12 @@ function pill (status, label) {
   return h('span', { class: `pill ${status}` }, label || status)
 }
 
+function bytes (n) {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
 function plural (n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
@@ -438,6 +444,12 @@ function paneTasks (swarm) {
       h('div', { class: 'task-head' }, h('span', { class: 't' }, 'Final result'), pill('done', 'delivered')),
       h('div', { class: 'meta' }, `${job.result.summary} · by ${job.result.nick} · ${job.result.bytes.toLocaleString()} chars`),
       h('pre', null, job.result.preview + (job.result.truncated ? '\n… (truncated: ask Claude for the full result)' : ''))),
+    job.files.length ? h('div', { class: 'files' },
+      h('div', { class: 'side-title' }, 'Shared files'),
+      job.files.map((f) => h('div', { class: 'file' }, icon('copy'),
+        h('span', { class: 't' }, f.name),
+        h('span', { class: 'meta' }, `${plural(f.files, 'file')} · ${bytes(f.bytes)} · by ${f.mine ? 'you' : f.by}${f.basedOn ? ` · based on ${f.basedOn}` : ''}${f.note ? ` · ${f.note}` : ''}`),
+        h('span', { class: 'ref' }, f.ref)))) : null,
     job.tasks.map((t) => renderTask(job, t))
   ]
 }
@@ -491,6 +503,7 @@ function describe (e) {
     case 'task.review': return [e.verdict, `${who} ${e.verdict === 'accept' ? 'endorsed' : 'challenged'} the result for “${task}”${e.note ? `: ${e.note}` : ''}`]
     case 'job.close': return ['', `${who} closed a job`]
     case 'msg': return ['msg', `${who}: ${e.text}`]
+    case 'file.share': return ['msg', `${who} shared “${e.name}” (${plural(e.files, 'file')}, ${bytes(e.bytes)})`]
     case 'swarm.advert': return ['', `${who} advertised the swarm “${e.name}”`]
     case 'peer.hello': return ['', `${e.nick} joined`]
     default: return ['', `${who} ${e.type}`]

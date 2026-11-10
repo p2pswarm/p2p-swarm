@@ -13,6 +13,9 @@
 // arrival, whoever relayed it.
 import { EventEmitter } from 'node:events'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { once } from 'node:events'
 import Hyperswarm from 'hyperswarm'
 import DHT from 'hyperdht'
 import { Store } from '../core/store.js'
@@ -20,6 +23,7 @@ import { createEvent, checkEvent, compareEvents, MAX_LAMPORT, PROTOCOL_VERSION }
 import { createSwarmKey, topicFromKey, encodeLink, parseLink, lobbyKey, LOBBY_NAME } from '../core/link.js'
 import { reduce } from '../core/state.js'
 import { encodeFrame, FrameDecoder } from './wire.js'
+import { BlobStore, listFiles, encodeManifest, validateManifest, safeJoin, checkPath, MAX_MANIFEST_BYTES } from '../core/blobs.js'
 
 // A swarm's log has no size limit. The id list used for sync is sent in parts
 // so that it never has to fit in one frame.
@@ -28,6 +32,9 @@ const MAX_HAVE_PARTS = 100000
 const MAX_STRIKES = 20
 const BAN_MS = 10 * 60 * 1000
 const BATCH_BYTES = 512 * 1024
+const BLOB_CHUNK = 256 * 1024 // bytes of file per frame
+const BLOB_IDLE_MS = 30000 // give up on a transfer that goes quiet
+const MAX_SERVES_PER_PEER = 8
 const VIEW_TTL_MS = 2000
 // Two peers that join within seconds of each other can both query the DHT
 // before the other's announcement has landed. While a swarm is lonely we look
@@ -60,6 +67,9 @@ export class SwarmNode extends EventEmitter {
     this.seq = 0
     this.waiters = new Set()
     this.banned = new Map() // peer id -> time the ban lifts (in memory only)
+    this.blobs = new BlobStore(path.join(this.store.home, 'blobs'))
+    this.fetching = new Map() // blob hash -> promise, so one file is never downloaded twice at once
+    this.reqSeq = 0
     this.startedAt = Date.now()
     this.stopped = false
     this.hyperswarm = null
@@ -152,6 +162,7 @@ export class SwarmNode extends EventEmitter {
       view: null,
       viewAt: 0,
       discovery: null,
+      blobAllowed: new Set(), // file hashes this swarm has announced: the only ones served to its members
       backoff: REDISCOVER_MIN_MS,
       nextLookup: Date.now() + REDISCOVER_MIN_MS
     }
@@ -228,6 +239,7 @@ export class SwarmNode extends EventEmitter {
     for (let i = 0; i < 32; i++) rec.digest[i] ^= idBuf[i]
     if (e.lamport > rec.lamport) rec.lamport = e.lamport
     rec.view = null
+    if (e.type === 'file.share') this._allowShare(rec, e.body.root)
   }
 
   _accept (rec, e, fromPeer) {
@@ -249,6 +261,9 @@ export class SwarmNode extends EventEmitter {
   _receive (rec, e) {
     if (e && typeof e.id === 'string' && rec.events.has(e.id)) return null
     const problem = checkEvent(e, { swarm: rec.topic })
+    // A kind of event this version does not know is skipped, not punished: a
+    // newer peer must be able to share a swarm with an older one.
+    if (problem && problem.startsWith('unknown event type')) return null
     if (problem) return problem
     if (this.store.config.blocked.includes(e.author)) return null
     return undefined
@@ -308,7 +323,7 @@ export class SwarmNode extends EventEmitter {
     const id = conn.remotePublicKey.toString('hex')
     conn.on('error', () => {})
     if (this.store.config.blocked.includes(id) || this.banned.get(id) > Date.now()) return conn.destroy()
-    const peer = { id, conn, shared: new Set(), entries: [], strikes: 0, since: Date.now(), haves: new Map() }
+    const peer = { id, conn, shared: new Set(), entries: [], strikes: 0, since: Date.now(), haves: new Map(), fetches: new Map(), serving: 0 }
     const previous = this.peers.get(id)
     this.peers.set(id, peer)
     if (previous) previous.conn.destroy()
@@ -322,6 +337,7 @@ export class SwarmNode extends EventEmitter {
       }
     })
     conn.on('close', () => {
+      for (const f of peer.fetches.values()) f.fail(new Error('peer disconnected'))
       if (this.peers.get(id) === peer) this.peers.delete(id)
       this.emit('peers')
     })
@@ -435,6 +451,207 @@ export class SwarmNode extends EventEmitter {
         if (verdict === undefined) this._accept(rec, e, peer)
         else if (verdict !== null) this._strike(peer)
       }
+      return
     }
+
+    if (m.t === 'blob.want') return this._serveBlob(peer, rec, m)
+    if (m.t === 'blob.data' || m.t === 'blob.miss') return this._onBlob(peer, m)
+  }
+
+  // ---- files --------------------------------------------------------------
+  //
+  // Files ride the same connections as events. A peer asks for a blob by hash
+  // (blob.want) and gets it back in chunks (blob.data) or a refusal
+  // (blob.miss). Only hashes a swarm has announced are served, and only to
+  // peers that have proven membership of that swarm.
+
+  _allowShare (rec, root) {
+    rec.blobAllowed.add(root)
+    if (!this.blobs.has(root)) return
+    try {
+      for (const f of this.blobs.readManifest(root)) rec.blobAllowed.add(f.hash)
+    } catch { /* not a manifest we can use: its files stay unlisted */ }
+  }
+
+  async _serveBlob (peer, rec, m) {
+    const refuse = () => peer.conn.write(encodeFrame({ t: 'blob.miss', topic: rec.topic, req: m.req }))
+    if (!Number.isSafeInteger(m.req) || typeof m.hash !== 'string') return this._strike(peer)
+    if (!rec.blobAllowed.has(m.hash) || !this.blobs.has(m.hash) || peer.serving >= MAX_SERVES_PER_PEER) return refuse()
+    peer.serving++
+    let handle
+    try {
+      handle = await fs.promises.open(this.blobs.path(m.hash), 'r')
+      const size = (await handle.stat()).size
+      const chunk = Buffer.allocUnsafe(BLOB_CHUNK)
+      let offset = 0
+      let seq = 0
+      do {
+        const { bytesRead } = await handle.read(chunk, 0, BLOB_CHUNK, offset)
+        offset += bytesRead
+        const frame = encodeFrame({ t: 'blob.data', topic: rec.topic, req: m.req, seq: seq++, data: chunk.subarray(0, bytesRead).toString('base64'), end: offset >= size })
+        if (peer.conn.destroyed) break
+        if (!peer.conn.write(frame)) await once(peer.conn, 'drain') // respect backpressure: never buffer a whole file
+      } while (offset < size)
+    } catch {
+      if (!peer.conn.destroyed) refuse()
+    } finally {
+      peer.serving--
+      await handle?.close().catch(() => {})
+    }
+  }
+
+  _onBlob (peer, m) {
+    const f = peer.fetches.get(m.req)
+    if (!f) return
+    if (m.t === 'blob.miss') return f.fail(new Error('peer does not have it'))
+    if (m.seq !== f.seq++ || typeof m.data !== 'string') return f.fail(new Error('transfer out of order'), true)
+    const data = Buffer.from(m.data, 'base64')
+    f.received += data.length
+    if (f.received > f.limit) return f.fail(new Error('peer sent more data than the file has'), true)
+    f.hasher.update(data)
+    f.out.write(data)
+    f.touch()
+    if (m.end === true) f.finish()
+  }
+
+  _fetchFrom (peer, rec, hash, limit) {
+    return new Promise((resolve, reject) => {
+      const req = ++this.reqSeq
+      const tmp = this.blobs.tempPath()
+      const out = fs.createWriteStream(tmp, { mode: 0o600 })
+      let timer
+      let settled = false
+      const settle = (err, misbehaved) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        peer.fetches.delete(req)
+        if (misbehaved) this._strike(peer)
+        if (err) {
+          out.destroy()
+          fs.rmSync(tmp, { force: true })
+          reject(err)
+        } else resolve()
+      }
+      const f = {
+        seq: 0,
+        received: 0,
+        limit,
+        out,
+        hasher: crypto.createHash('sha256'),
+        touch: () => {
+          clearTimeout(timer)
+          timer = setTimeout(() => settle(new Error('transfer timed out')), BLOB_IDLE_MS)
+        },
+        fail: settle,
+        finish: () => out.end(() => {
+          // The whole point of naming files by hash: what arrived is either
+          // exactly what was asked for, or it is thrown away.
+          if (f.hasher.digest('hex') !== hash) return settle(new Error('file failed verification'), true)
+          try {
+            this.blobs.adopt(tmp, hash)
+            settle()
+          } catch (err) {
+            settle(err)
+          }
+        })
+      }
+      out.on('error', (err) => settle(err))
+      peer.fetches.set(req, f)
+      f.touch()
+      peer.conn.write(encodeFrame({ t: 'blob.want', topic: rec.topic, hash, req }))
+    })
+  }
+
+  // Gets one blob from the swarm, trying each connected member in turn.
+  fetchBlob (topic, hash, { limit = Infinity, prefer = null } = {}) {
+    if (this.blobs.has(hash)) return Promise.resolve()
+    const running = this.fetching.get(hash)
+    if (running) return running
+    const rec = this.swarms.get(topic)
+    if (!rec) return Promise.reject(new Error('not a member of that swarm'))
+    const job = (async () => {
+      const peers = [...this.peers.values()].filter((p) => p.shared.has(topic)).sort((a, b) => (b.id === prefer) - (a.id === prefer))
+      if (!peers.length) throw new Error('no other peer is online to fetch the file from')
+      let last = null
+      for (const peer of peers) {
+        try {
+          await this._fetchFrom(peer, rec, hash, limit)
+          return
+        } catch (err) {
+          last = err
+        }
+      }
+      throw new Error(`could not fetch the file from any of ${peers.length} online peer(s): ${last.message}`)
+    })().finally(() => this.fetching.delete(hash))
+    this.fetching.set(hash, job)
+    return job
+  }
+
+  shareById (topic, id) {
+    const share = this.view(topic).shares.get(id)
+    if (!share) throw new Error('no such share')
+    return share
+  }
+
+  // The file list of a share, fetching the manifest from peers if needed.
+  async manifest (topic, share) {
+    await this.fetchBlob(topic, share.root, { limit: MAX_MANIFEST_BYTES, prefer: share.author })
+    const files = this.blobs.readManifest(share.root)
+    const rec = this.swarms.get(topic)
+    for (const f of files) rec.blobAllowed.add(f.hash)
+    return files
+  }
+
+  // Publishes a snapshot whose files are already in the local store.
+  publishShare (topic, files, { name, job, task, base, note } = {}) {
+    if (!files.length) throw new Error('nothing to share: the snapshot would be empty')
+    const rec = this.swarms.get(topic)
+    if (!rec) throw new Error('not a member of that swarm')
+    for (const f of files) if (checkPath(f.path)) throw new Error(`unsafe path: ${f.path}`)
+    const manifest = validateManifest(JSON.parse(encodeManifest(files).toString('utf8')))
+    const root = this.blobs.putBuffer(encodeManifest(manifest))
+    for (const f of manifest) rec.blobAllowed.add(f.hash)
+    const body = { name: String(name || 'files').slice(0, 120), root, size: manifest.reduce((sum, f) => sum + f.size, 0), count: manifest.length }
+    if (job) body.job = job
+    if (task) body.task = task
+    if (base) body.base = base
+    if (note) body.note = String(note).slice(0, 1000)
+    return this.publish(topic, 'file.share', body)
+  }
+
+  // Shares a file or folder from this machine.
+  async shareFromDisk (topic, target, options = {}) {
+    const { base, files, skipped } = listFiles(target)
+    const entries = []
+    for (const rel of files) {
+      const full = path.join(base, ...rel.split('/'))
+      const { hash, size } = await this.blobs.putFile(full)
+      const executable = (fs.statSync(full).mode & 0o111) !== 0
+      entries.push({ path: rel, hash, size, ...(executable ? { x: true } : {}) })
+    }
+    if (!entries.length) throw new Error(skipped.length ? 'nothing to share: every file there looks like a secret and was left out' : 'nothing to share: no files found')
+    const event = this.publishShare(topic, entries, { name: path.basename(target), ...options })
+    return { event, skipped }
+  }
+
+  // Writes a share out as real files in an empty folder.
+  async fetchToDisk (topic, share, dest) {
+    const files = await this.manifest(topic, share)
+    const queue = [...files]
+    const worker = async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) await this.fetchBlob(topic, f.hash, { limit: f.size, prefer: share.author })
+    }
+    await Promise.all(Array.from({ length: 4 }, worker))
+    fs.mkdirSync(dest, { recursive: true })
+    const root = fs.realpathSync(dest)
+    for (const f of files) {
+      const out = safeJoin(root, f.path)
+      fs.mkdirSync(path.dirname(out), { recursive: true })
+      // A copy, never a link: editing the fetched file must not corrupt the store.
+      fs.copyFileSync(this.blobs.path(f.hash), out, fs.constants.COPYFILE_FICLONE)
+      fs.chmodSync(out, f.x ? 0o755 : 0o644)
+    }
+    return { path: root, files: files.length, bytes: files.reduce((sum, f) => sum + f.size, 0) }
   }
 }

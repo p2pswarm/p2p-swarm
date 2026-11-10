@@ -282,7 +282,7 @@ test('the local API survives hostile and malformed requests', async (t) => {
     const r = await post({ action: 'create_swarm', params })
     assert.equal(r.status, 400, `params ${JSON.stringify(params)}`)
   }
-  assert.equal((await post(null, JSON.stringify({ action: 'create_swarm', params: { name: 'x'.repeat(3 * 1024 * 1024) } }))).status, 413)
+  assert.equal((await post(null, JSON.stringify({ action: 'create_swarm', params: { name: 'x'.repeat(20 * 1024 * 1024) } }))).status, 413)
   assert.equal((await fetch(`${base}/api/../../etc/passwd`, { headers })).status, 404)
   assert.equal((await fetch(`${base}/app.js/../../../package.json`)).status, 404)
   assert.equal((await fetch(`${base}/api/job?ref=zz`, { headers })).status >= 400, true)

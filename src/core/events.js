@@ -64,6 +64,13 @@ const VALIDATORS = {
     HEX64.test(b.submission) && (b.verdict === 'accept' || b.verdict === 'reject') && optStr(b.note, 4000),
   'job.close': (b) => onlyKeys(b, ['job', 'note']) && HEX64.test(b.job) && optStr(b.note, 4000),
   msg: (b) => onlyKeys(b, ['text', 'job']) && str(b.text, 8000) && (b.job === undefined || HEX64.test(b.job)),
+  // Announces a folder snapshot. Only the fingerprint travels in the log; the
+  // bytes are fetched peer to peer on demand.
+  'file.share': (b) => onlyKeys(b, ['name', 'root', 'size', 'count', 'job', 'task', 'base', 'note']) &&
+    str(b.name, 120) && HEX64.test(b.root) && Number.isSafeInteger(b.size) && b.size >= 0 &&
+    Number.isSafeInteger(b.count) && b.count >= 1 &&
+    (b.job === undefined || HEX64.test(b.job)) && (b.task === undefined || TASK_REF.test(b.task)) &&
+    (b.base === undefined || HEX64.test(b.base)) && optStr(b.note, 1000),
   'swarm.advert': (b) => onlyKeys(b, ['name', 'description', 'link']) &&
     str(b.name, 80) && optStr(b.description, 1000) && str(b.link, 300) && /^swarm:\/\/[0-9a-f]{64}/.test(b.link)
 }

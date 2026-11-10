@@ -3,10 +3,16 @@
 // are subject to exactly the same rules.
 import { DEFAULT_LEASE_MS, MAX_LEASE_MS } from '../core/events.js'
 import { shortId } from '../core/identity.js'
+import { checkPath } from '../core/blobs.js'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const PREVIEW_CHARS = 1500
 const JOIN_SYNC_WAIT_MS = 12000
 const INPUT_CHARS = 30000 // per upstream result handed to a worker
+const READ_CHARS = 60000 // default slice of a shared file handed to a model
+const MAX_READ_BYTES = 20 * 1024 * 1024 // beyond this, fetch the share to disk instead
+const MAX_LISTED_FILES = 2000
 const REVIEWS_WANTED = 2 // stop offering a result for review once this many peers have voted
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -75,6 +81,17 @@ function resolveSubmission (node, ref, swarmRef) {
   throw new Error(hits.length ? `"${ref}" matches several submissions` : `no submission matches "${ref}"`)
 }
 
+export function resolveShare (node, ref, swarmRef) {
+  const text = String(ref || '').trim().toLowerCase()
+  if (text.length < 6) throw new Error('share reference too short (use at least 6 characters)')
+  const hits = []
+  for (const rec of scope(node, swarmRef)) {
+    for (const share of node.view(rec.topic).shares.values()) if (share.id.startsWith(text)) hits.push({ rec, share })
+  }
+  if (hits.length === 1) return hits[0]
+  throw new Error(hits.length ? `"${ref}" matches several shares` : `no shared files match "${ref}"`)
+}
+
 function taskRef (id) {
   const [head, index] = id.split(':')
   return index === undefined ? shortId(head) : `${shortId(head)}:${index}`
@@ -88,6 +105,26 @@ function nickOf (view, id, node) {
   if (id === node.id) return node.nick
   return view.peers.get(id)?.nick || `peer-${id.slice(0, 6)}`
 }
+
+function serializeShare (node, view, share) {
+  const base = share.base && [...view.shares.values()].find((x) => x.root === share.base)
+  return {
+    id: share.id,
+    ref: shortId(share.id),
+    name: share.name,
+    files: share.count,
+    bytes: share.size,
+    by: nickOf(view, share.author, node),
+    mine: share.author === node.id,
+    ts: share.ts,
+    ...(share.note ? { note: share.note } : {}),
+    ...(share.job ? { job: shortId(share.job) } : {}),
+    ...(share.task ? { task: taskRef(share.task) } : {}),
+    ...(base ? { basedOn: shortId(base.id) } : {})
+  }
+}
+
+const sharesOf = (node, view, jobId) => [...view.shares.values()].filter((x) => x.job === jobId).sort((a, b) => a.ts - b.ts).map((x) => serializeShare(node, view, x))
 
 function serializeSubmission (node, view, task, s, full) {
   return {
@@ -150,6 +187,7 @@ function serializeJob (node, view, job, opts = {}) {
           ...(opts.full ? { content: job.result.content } : { preview: job.result.content.slice(0, PREVIEW_CHARS * 2), truncated: job.result.content.length > PREVIEW_CHARS * 2 })
         }
       : null,
+    files: sharesOf(node, view, job.id),
     tasks: tasksOf(view, job).map((t) => serializeTask(node, view, t, opts))
   }
 }
@@ -179,6 +217,7 @@ function serializeSwarm (node, rec) {
     online: online.size,
     members,
     jobs: [...view.jobs.values()].sort((a, b) => b.ts - a.ts).map((j) => serializeJob(node, view, j)),
+    files: [...view.shares.values()].sort((a, b) => b.ts - a.ts).slice(0, 200).map((x) => serializeShare(node, view, x)),
     messages: view.messages.slice(-300).map((m) => ({ ...m, nick: nickOf(view, m.author, node), mine: m.author === node.id })),
     adverts: [...view.adverts.values()].sort((a, b) => b.ts - a.ts).map((a) => ({ ...a, nick: nickOf(view, a.author, node) }))
   }
@@ -231,6 +270,7 @@ export function describeEvent (node, item) {
     case 'task.review': return { ...base, ...withTask, submission: shortId(b.submission), verdict: b.verdict, note: b.note || null }
     case 'job.close': return { ...base, job: shortId(b.job), note: b.note || null }
     case 'msg': return { ...base, job: b.job ? shortId(b.job) : null, text: b.text }
+    case 'file.share': return { ...base, share: shortId(e.id), name: b.name, files: b.count, bytes: b.size, job: b.job ? shortId(b.job) : null }
     case 'swarm.advert': return { ...base, name: b.name, link: b.link }
     case 'peer.hello': return { ...base, nick: b.nick }
     default: return base
@@ -308,7 +348,7 @@ function planning (node, rec, job, task) {
       '(2) Post one swarm_message on the job with the conventions every piece must share (names, formats, interfaces, style). ' +
       '(3) swarm_release this task: it unlocks by itself when the pieces are done, and whoever takes it then assembles the final result. ' +
       '(4) Call swarm_next to take one of the pieces yourself. ' +
-      'Only if the whole job is genuinely a few minutes of work for a single agent may you skip the plan and just do it and swarm_submit.'
+      'Submitting this task yourself is not possible while other agents are online and the job has no tasks: the swarm does the work together.'
   }
 }
 
@@ -331,10 +371,11 @@ function workPackage (node, rec, view, job, task) {
     otherAgentsOnThisJob: others.size,
     peersOnlineInSwarm: node.onlinePeers(rec.topic).length,
     inputs,
+    files: sharesOf(node, view, job.id),
     plan: overview(node, view, job),
     thread: view.messages.filter((m) => m.job === job.id).slice(-12).map((m) => ({ from: m.author === node.id ? 'you' : nickOf(view, m.author, node), text: m.text })),
     previousAttempts: task.submissions.filter((s) => !s.standing).map((s) => ({ by: nickOf(view, s.author, node), summary: s.summary, objections: s.reviews.filter((r) => r.verdict === 'reject').map((r) => r.note).filter(Boolean) })),
-    next: 'Do the task, then swarm_submit. Call swarm_claim again to extend the lease if you need longer. If you find work that is missing from the plan, swarm_add_task.'
+    next: (sharesOf(node, view, job.id).length ? 'This job has shared files: list them with swarm_files and read them with swarm_read_file. To deliver files, publish them with swarm_put_files (use `base` to start from an existing share) and name the share in your result. ' : '') + 'Do the task, then swarm_submit. Call swarm_claim again to extend the lease if you need longer. If you find work that is missing from the plan, swarm_add_task.'
   }
 }
 
@@ -357,6 +398,19 @@ function leaseFrom (minutes) {
 
 function waitingMessage (task, view) {
   return `that task is waiting for: ${task.blockedBy.map((id) => `${taskRef(id)} (${view.tasks.get(id).title})`).join(', ')}`
+}
+
+// Where a share belongs: a task, a job, or just the swarm.
+function shareContext (node, p) {
+  if (p.task) {
+    const { rec, task, job } = resolveTask(node, p.task, p.swarm)
+    return { rec, job: job.id, task: task.id }
+  }
+  if (p.job) {
+    const { rec, job } = resolveJob(node, p.job, p.swarm)
+    return { rec, job: job.id }
+  }
+  return { rec: resolveSwarm(node, p.swarm) }
 }
 
 export const actions = {
@@ -524,6 +578,11 @@ export const actions = {
     const view = node.view(rec.topic)
     if (job.closed) throw new Error('that job is closed')
     if (task.status === 'blocked') throw new Error(waitingMessage(task, view))
+    // A swarm does not let one agent quietly do a whole job while the others
+    // wait. With peers online, an un-split job has to be planned first.
+    if (task.final && !job.taskIds.length && node.onlinePeers(rec.topic).length) {
+      throw new Error('other agents are online and this job has not been split into tasks. Add the pieces with swarm_add_task, swarm_release this task, then take a piece with swarm_next. (Even a small job: add it as one task so another agent can do or check it.)')
+    }
     const e = node.publish(rec.topic, 'task.submit', { task: task.id, summary: text(p.summary, 'summary'), content: text(p.result ?? p.content, 'result') })
     const after = node.view(rec.topic).jobs.get(job.id)
     return { task: taskRef(task.id), submission: shortId(e.id), taskStatus: 'done', job: { ref: shortId(job.id), status: after.status, progress: `${after.done}/${after.total}` } }
@@ -544,6 +603,124 @@ export const actions = {
     node.publish(rec.topic, 'task.review', body)
     const after = node.view(rec.topic).tasks.get(task.id)
     return { task: taskRef(task.id), submission: shortId(matches[0].id), verdict: p.verdict, taskStatus: after.status }
+  },
+
+  // ---- files -----------------------------------------------------------
+
+  // Share a file or folder from this machine. Secrets-looking files, VCS
+  // metadata, dependencies and git-ignored files are always left out.
+  async share (node, p) {
+    const target = text(p.path, 'path')
+    if (!path.isAbsolute(target)) throw new Error('"path" must be an absolute path')
+    if (!fs.existsSync(target)) throw new Error(`nothing at ${target}`)
+    const ctx = shareContext(node, p)
+    const { event, skipped } = await node.shareFromDisk(ctx.rec.topic, target, { name: p.name, job: ctx.job, task: ctx.task, note: p.note })
+    return {
+      share: shortId(event.id),
+      swarm: ctx.rec.name,
+      name: event.body.name,
+      files: event.body.count,
+      bytes: event.body.size,
+      ...(skipped.length ? { leftOut: { count: skipped.length, reason: 'looked like secrets', examples: skipped.slice(0, 10) } } : {})
+    }
+  },
+
+  // Publish a snapshot built from text and from files already in the swarm.
+  // Nothing is read from this machine's disk, so it is safe for an agent that
+  // has no file access.
+  async put_files (node, p) {
+    const ctx = shareContext(node, p)
+    const entries = new Map()
+    let baseShare = null
+    if (p.base) {
+      baseShare = resolveShare(node, p.base, ctx.rec.topic).share
+      for (const f of await node.manifest(ctx.rec.topic, baseShare)) entries.set(f.path, f)
+    }
+    let changed = 0
+    for (const gone of Array.isArray(p.delete) ? p.delete : []) if (entries.delete(String(gone))) changed++
+    for (const c of Array.isArray(p.copy) ? p.copy : []) {
+      const from = resolveShare(node, c.share, ctx.rec.topic).share
+      const found = (await node.manifest(ctx.rec.topic, from)).find((f) => f.path === c.path)
+      if (!found) throw new Error(`"${c.path}" is not in share ${c.share}`)
+      await node.fetchBlob(ctx.rec.topic, found.hash, { limit: found.size, prefer: from.author })
+      const to = c.to || c.path
+      if (checkPath(to)) throw new Error(`unsafe path: ${to}`)
+      entries.set(to, { ...found, path: to })
+      changed++
+    }
+    for (const f of Array.isArray(p.files) ? p.files : []) {
+      if (!f || checkPath(f.path)) throw new Error(`unsafe or missing path: ${f && f.path}`)
+      if (typeof f.content !== 'string') throw new Error(`"content" for ${f.path} must be text`)
+      const data = Buffer.from(f.content, 'utf8')
+      entries.set(f.path, { path: f.path, hash: node.blobs.putBuffer(data), size: data.length, ...(f.executable ? { x: true } : {}) })
+      changed++
+    }
+    if (!changed) throw new Error('nothing to publish: give `files`, `copy` or `delete`')
+    const event = node.publishShare(ctx.rec.topic, [...entries.values()], {
+      name: p.name || (baseShare ? baseShare.name : 'files'), job: ctx.job, task: ctx.task, base: baseShare ? baseShare.root : undefined, note: p.note
+    })
+    return { share: shortId(event.id), swarm: ctx.rec.name, name: event.body.name, files: event.body.count, bytes: event.body.size, changed, ...(baseShare ? { basedOn: shortId(baseShare.id) } : {}) }
+  },
+
+  // With no share: what has been shared. With one: its file list, marked
+  // against the share it was based on when we have that to compare with.
+  async files (node, p) {
+    if (!p.share) {
+      const jobId = p.job ? resolveJob(node, p.job, p.swarm).job.id : null
+      const out = []
+      for (const rec of scope(node, p.swarm)) {
+        const view = node.view(rec.topic)
+        for (const share of view.shares.values()) if (!jobId || share.job === jobId) out.push({ swarm: rec.name, ...serializeShare(node, view, share) })
+      }
+      return { shares: out.sort((a, b) => b.ts - a.ts).slice(0, 200) }
+    }
+    const { rec, share } = resolveShare(node, p.share, p.swarm)
+    const view = node.view(rec.topic)
+    const files = await node.manifest(rec.topic, share)
+    const baseShare = share.base && [...view.shares.values()].find((x) => x.root === share.base)
+    let before = null
+    if (baseShare) before = new Map((await node.manifest(rec.topic, baseShare).catch(() => [])).map((f) => [f.path, f.hash]))
+    const prefix = p.prefix ? String(p.prefix) : ''
+    const listed = files.filter((f) => f.path.startsWith(prefix)).map((f) => ({
+      path: f.path,
+      size: f.size,
+      ...(before ? { change: !before.has(f.path) ? 'added' : before.get(f.path) !== f.hash ? 'modified' : 'same' } : {})
+    }))
+    const now = new Set(files.map((f) => f.path))
+    return {
+      ...serializeShare(node, view, share),
+      swarm: rec.name,
+      listing: listed.slice(0, MAX_LISTED_FILES),
+      ...(listed.length > MAX_LISTED_FILES ? { truncated: true, total: listed.length, hint: 'narrow it with `prefix`' } : {}),
+      ...(before ? { deleted: [...before.keys()].filter((k) => !now.has(k)) } : {})
+    }
+  },
+
+  // One file out of a share, as text. Fetches just that file from peers.
+  async read_file (node, p) {
+    const { rec, share } = resolveShare(node, p.share, p.swarm)
+    const wanted = text(p.path, 'path')
+    const found = (await node.manifest(rec.topic, share)).find((f) => f.path === wanted)
+    if (!found) throw new Error(`"${wanted}" is not in that share: list it with the files action`)
+    if (found.size > MAX_READ_BYTES) throw new Error(`that file is ${found.size} bytes: too large to read as text, fetch the share to disk instead`)
+    await node.fetchBlob(rec.topic, found.hash, { limit: found.size, prefer: share.author })
+    const data = node.blobs.read(found.hash)
+    if (data.subarray(0, 8192).includes(0)) return { share: shortId(share.id), path: wanted, size: found.size, binary: true, note: 'binary file: not shown' }
+    const all = data.toString('utf8')
+    const offset = Math.max(0, Number(p.offset) || 0)
+    const max = Math.min(Math.max(1, Number(p.max_chars) || READ_CHARS), 200000)
+    const slice = all.slice(offset, offset + max)
+    const more = offset + slice.length < all.length
+    return { share: shortId(share.id), path: wanted, size: found.size, offset, text: slice, ...(more ? { truncated: true, nextOffset: offset + slice.length } : {}) }
+  },
+
+  // Write a whole share out as real files, into a folder that is new or empty.
+  async fetch (node, p) {
+    const { rec, share } = resolveShare(node, p.share, p.swarm)
+    const dest = text(p.dest, 'dest')
+    if (!path.isAbsolute(dest)) throw new Error('"dest" must be an absolute path')
+    if (fs.existsSync(dest) && (!fs.statSync(dest).isDirectory() || fs.readdirSync(dest).length)) throw new Error(`${dest} already has things in it: choose a new or empty folder so nothing is overwritten`)
+    return { share: shortId(share.id), name: share.name, ...(await node.fetchToDisk(rec.topic, share, dest)) }
   },
 
   close_job (node, p) {
