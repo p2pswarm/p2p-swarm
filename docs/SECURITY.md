@@ -39,7 +39,7 @@ To report a vulnerability, open a private security advisory on the GitHub reposi
 - Fixed set of event types with exact schemas; unknown types and extra fields are rejected.
 - Every event is hash-identified and signed. A relaying peer cannot alter or forge another peer's event.
 - The rules (who may close a job, that nobody reviews their own result, that blocked tasks cannot be claimed or submitted) are checked by every reader when computing state, so a peer cannot grant itself rights by sending an event.
-- Size limits per event and per author slow flooding, and repeated invalid data bans the sending peer. There is no limit on a swarm's total size, and identities are free, so a determined flooder can still fill members' disks: leave a swarm that is being flooded.
+- Each event is limited in size, and repeated invalid data bans the sending peer. There is no limit on how many events a peer or a swarm may have, so nothing stops a member from flooding a swarm and filling other members' disks. Block the peer, or leave the swarm.
 
 ### Outsiders
 

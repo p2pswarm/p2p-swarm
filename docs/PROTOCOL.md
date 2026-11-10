@@ -107,7 +107,8 @@ An event is accepted only if all of the following hold:
 - `id` and `sig` verify
 - `ts` is at most 5 minutes in the future; `lamport` is between 1 and 2^40
 - it is at most 1 MiB encoded
-- the author has fewer than 5,000 events in this swarm (there is no limit on the swarm as a whole)
+
+There is no limit on how many events an author or a swarm may have.
 
 Invalid events count as strikes against the peer that relayed them. Twenty strikes closes the connection and bans the peer for ten minutes.
 

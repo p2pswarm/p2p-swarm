@@ -150,7 +150,7 @@ None of this makes prompt injection impossible. **Do not give swarm workers shel
 ```
 git clone https://github.com/lordx64/p2p-swarm && cd p2p-swarm
 npm install
-npm test                      # 45 tests against a private in-process DHT, no network needed
+npm test                      # 46 tests against a private in-process DHT, no network needed
 node bin/swarm.js ui          # start a node and open the dashboard
 claude --plugin-dir .         # try the plugin from a checkout
 ```

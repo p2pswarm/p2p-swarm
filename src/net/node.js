@@ -21,7 +21,6 @@ import { createSwarmKey, topicFromKey, encodeLink, parseLink, lobbyKey, LOBBY_NA
 import { reduce } from '../core/state.js'
 import { encodeFrame, FrameDecoder } from './wire.js'
 
-const MAX_EVENTS_PER_AUTHOR = 5000
 // A swarm's log has no size limit. The id list used for sync is sent in parts
 // so that it never has to fit in one frame.
 const HAVE_PART_IDS = 20000
@@ -148,7 +147,6 @@ export class SwarmNode extends EventEmitter {
       joinedAt,
       link: encodeLink(key, name),
       events: new Map(),
-      perAuthor: new Map(),
       digest: Buffer.alloc(32),
       lamport: 0,
       view: null,
@@ -226,7 +224,6 @@ export class SwarmNode extends EventEmitter {
 
   _index (rec, e) {
     rec.events.set(e.id, e)
-    rec.perAuthor.set(e.author, (rec.perAuthor.get(e.author) || 0) + 1)
     const idBuf = Buffer.from(e.id, 'hex')
     for (let i = 0; i < 32; i++) rec.digest[i] ^= idBuf[i]
     if (e.lamport > rec.lamport) rec.lamport = e.lamport
@@ -254,7 +251,6 @@ export class SwarmNode extends EventEmitter {
     const problem = checkEvent(e, { swarm: rec.topic })
     if (problem) return problem
     if (this.store.config.blocked.includes(e.author)) return null
-    if ((rec.perAuthor.get(e.author) || 0) >= MAX_EVENTS_PER_AUTHOR) return 'author quota exceeded'
     return undefined
   }
 

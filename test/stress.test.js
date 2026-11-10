@@ -60,6 +60,19 @@ test('sync works when the id list has to be sent in many parts', async (t) => {
   assert.equal(alice.peers.get(bob.id).strikes, 5)
 })
 
+test('one busy peer can write far more than any old per-author limit', async (t) => {
+  const net = await testnet(t)
+  const alice = await net.node('alice')
+  const swarm = alice.createSwarm('prolific')
+  for (let i = 0; i < 7000; i++) alice.publish(swarm.topic, 'msg', { text: `m${i}` })
+  const bob = await net.node('bob')
+  bob.joinSwarm(swarm.link)
+  await until(() => bob.swarms.get(swarm.topic).events.size === 7002, { label: 'all 7,000 from one author', timeout: 30000 })
+  assert.equal(bob.view(swarm.topic).messages.length, 7000)
+  assert.equal(bob.peers.get(alice.id).strikes, 0) // and relaying them is not held against anyone
+  assert.equal(bob.banned.size, 0)
+})
+
 test('five peers racing for one task all agree on a single winner', async (t) => {
   const net = await testnet(t)
   const nodes = await Promise.all(['a', 'b', 'c', 'd', 'e'].map((n) => net.node(n)))
