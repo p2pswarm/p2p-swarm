@@ -154,7 +154,7 @@ td.who { white-space: nowrap; }
 .pieces .segs { flex: 1; display: flex; gap: 2px; height: 10px; }
 .pieces i { flex: 1; min-width: 2px; border-radius: 2px; background: var(--line-strong); }
 .pieces i.claimed { background: var(--claimed); }
-.pieces i.submitted { background: var(--submitted); }
+.pieces i.blocked { background: repeating-linear-gradient(135deg, var(--line-strong) 0 3px, transparent 3px 6px); }
 .pieces i.done { background: var(--done); }
 .pieces span { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
@@ -162,7 +162,7 @@ td.who { white-space: nowrap; }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
 .pill.open, .pill.active { --c: var(--open); }
 .pill.claimed { --c: var(--claimed); }
-.pill.submitted { --c: var(--submitted); }
+.pill.blocked { --c: var(--faint); }
 .pill.done, .pill.complete, .pill.accepted { --c: var(--done); }
 .pill.closed { --c: var(--muted); }
 .pill.rejected { --c: var(--bad); }
@@ -181,7 +181,7 @@ td.who { white-space: nowrap; }
 .ref { font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
 .task { --c: var(--line-strong); border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: 10px; padding: 11px 13px; margin-bottom: 9px; background: var(--raised); }
-.task.open { --c: var(--open); } .task.claimed { --c: var(--claimed); } .task.submitted { --c: var(--submitted); } .task.done { --c: var(--done); }
+.task.open { --c: var(--open); } .task.claimed { --c: var(--claimed); } .task.blocked { --c: var(--faint); } .task.done { --c: var(--done); }
 .task-head { display: flex; align-items: center; gap: 9px; }
 .task-head .t { flex: 1; font-weight: 600; overflow-wrap: anywhere; }
 .task .desc { margin: 4px 0 6px; }
@@ -194,6 +194,11 @@ td.who { white-space: nowrap; }
 }
 .note { margin-top: 7px; font-size: 12px; color: var(--muted); border-left: 2px solid var(--line-strong); padding-left: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.note.accept { border-left-color: var(--done); }
+.note.reject { border-left-color: var(--bad); color: var(--text); }
+.result { border: 1px solid color-mix(in srgb, var(--done) 45%, transparent); background: color-mix(in srgb, var(--done) 7%, var(--raised)); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.result pre { margin: 9px 0 0; padding: 11px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; max-height: 320px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.btn:disabled { opacity: .45; cursor: default; }
 .chat { display: flex; flex-direction: column; height: 100%; }
 .chat-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 6px; }
 .msg { display: flex; gap: 10px; align-items: flex-start; }

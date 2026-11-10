@@ -188,11 +188,11 @@ async function postJob () {
   if (!swarm) return toast('Create or join a swarm first', true)
   const v = await ask({
     title: `Post a job to ${swarm.name}`,
-    text: 'Visible to every member, permanently. Leave out secrets and private data.',
+    text: 'Describe the goal. Agents in the swarm plan it, do it and deliver the result on their own. Visible to every member, permanently: leave out secrets and private data.',
     fields: [
       { name: 'title', label: 'Title', max: 200 },
-      { name: 'description', label: 'What needs doing (context every worker should read)', type: 'textarea', rows: 5, required: false },
-      { name: 'tasks', label: 'Tasks, one per line (leave empty for a single task)', type: 'textarea', rows: 4, required: false }
+      { name: 'description', label: 'Goal, constraints, and the exact form the result should take', type: 'textarea', rows: 6, required: false },
+      { name: 'tasks', label: 'Tasks, one per line (optional: leave empty and the swarm plans it)', type: 'textarea', rows: 3, required: false }
     ],
     submit: 'Post job'
   })
@@ -214,15 +214,21 @@ async function submitResult (task) {
   if (v) act('submit', { task: task.id, ...v }, 'Submitted')
 }
 
-async function review (task, sub, verdict) {
+// Peer review never blocks anything: a result counts as soon as it is
+// submitted. Endorsing is one click; challenging asks for the reason.
+async function endorse (task, sub) {
+  act('review', { task: task.id, submission: sub.id, verdict: 'accept' }, 'Endorsed')
+}
+
+async function challenge (task, sub) {
   const v = await ask({
-    title: verdict === 'accept' ? 'Accept this result?' : 'Reject this result?',
-    text: verdict === 'accept' ? 'Accepting marks the task as done for everyone.' : 'The task goes back to the pool.',
-    fields: [{ name: 'note', label: 'Note to the worker (optional)', type: 'textarea', rows: 3, required: false }],
-    submit: verdict === 'accept' ? 'Accept' : 'Reject',
-    danger: verdict === 'reject'
+    title: 'Challenge this result?',
+    text: 'If challenges outnumber endorsements the task reopens for another agent.',
+    fields: [{ name: 'note', label: 'What is wrong with it', type: 'textarea', rows: 3 }],
+    submit: 'Challenge',
+    danger: true
   })
-  if (v) act('review', { task: task.id, submission: sub.id, verdict, note: v.note || undefined }, verdict === 'accept' ? 'Accepted' : 'Rejected')
+  if (v) act('review', { task: task.id, submission: sub.id, verdict: 'reject', note: v.note }, 'Challenged')
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -349,7 +355,7 @@ function renderStats (swarm) {
     stat('users', 'done', swarm.online + 1, swarm.online ? `peers online (you + ${swarm.online})` : 'peer online (just you)'),
     stat('bolt', 'claimed', workersOf(swarm.jobs).length, 'agents working now'),
     stat('circle', 'open', count('open'), 'open tasks'),
-    stat('check', 'submitted', `${count('done')}/${tasks.length}`, count('submitted') ? `done · ${count('submitted')} awaiting review` : 'tasks done'))
+    stat('check', 'submitted', `${count('done')}/${tasks.length}`, count('blocked') ? `tasks done · ${count('blocked')} waiting on others` : 'tasks done'))
 }
 
 function pieces (job) {
@@ -361,7 +367,7 @@ function pieces (job) {
 function renderJobs (swarm) {
   if (!swarm.jobs.length) {
     return h('div', { class: 'panel jobs' }, h('div', { class: 'hint' },
-      'No jobs yet. Post one here, or ask Claude: “post a job to the swarm to …”'))
+      'No jobs yet. Post a goal here, or ask Claude: “/swarm:post …”. Agents in the swarm take it from there.'))
   }
   return h('div', { class: 'panel jobs' }, h('div', { class: 'jobs-scroll' }, h('table', null,
     h('thead', null, h('tr', null,
@@ -370,7 +376,7 @@ function renderJobs (swarm) {
     h('tbody', null, swarm.jobs.map((j) => {
       const workers = workersOf([j])
       return h('tr', { class: 'job' + (j.id === S.jobId ? ' active' : ''), onclick: () => { S.jobId = j.id; S.tab = 'tasks'; render(true) } },
-        h('td', { class: 'title' }, h('div', { title: j.title }, j.title), h('small', null, plural(j.total, 'task'))),
+        h('td', { class: 'title' }, h('div', { title: j.title }, j.title), h('small', null, j.result ? 'result delivered' : plural(j.total, 'task'))),
         h('td', null, pieces(j)),
         h('td', { class: 'who' }, workers.length
           ? h('span', { class: 'who-in' }, h('span', { class: 'stack' }, workers.slice(0, 5).map((w) => avatar(w.peer, w.mine ? 'you' : w.nick))), plural(workers.length, 'agent'))
@@ -381,42 +387,44 @@ function renderJobs (swarm) {
     })))))
 }
 
-function renderSubmission (job, t, s, live) {
-  const state = s.verdict === 'accept' ? 'accepted' : s.verdict === 'reject' ? 'rejected' : 'submitted'
+function renderSubmission (job, t, s) {
+  const [state, label] = s.accepted ? ['accepted', 'result'] : s.standing ? ['done', 'alternative'] : ['rejected', 'challenged']
+  const mineVote = s.reviews.find((r) => r.mine)
   return h('div', { class: 'sub' },
-    h('div', { class: 'task-head' }, h('span', { class: 't' }, s.summary), pill(state, state === 'submitted' ? 'awaiting review' : state)),
+    h('div', { class: 'task-head' }, h('span', { class: 't' }, s.summary), pill(state, label)),
     h('div', { class: 'meta' }, avatar(s.author, s.nick, 'xs'), `${s.mine ? 'you' : s.nick} · ${ago(s.ts)} · ${s.bytes.toLocaleString()} chars`),
     s.preview ? h('pre', null, s.preview + (s.truncated ? '\n… (truncated)' : '')) : null,
-    s.note ? h('div', { class: 'note' }, `Reviewer: ${s.note}`) : null,
-    job.mine && !s.verdict && live && h('div', { class: 'actions' },
-      h('button', { class: 'btn sm primary', onclick: () => review(t, s, 'accept') }, icon('check'), 'Accept'),
-      h('button', { class: 'btn sm danger', onclick: () => review(t, s, 'reject') }, icon('x'), 'Reject')))
+    s.reviews.map((r) => h('div', { class: 'note ' + r.verdict }, `${r.verdict === 'accept' ? 'Endorsed' : 'Challenged'} by ${r.mine ? 'you' : r.nick}${r.note ? `: ${r.note}` : ''}`)),
+    !s.mine && job.status !== 'closed' && h('div', { class: 'actions' },
+      h('button', { class: 'btn sm', disabled: mineVote?.verdict === 'accept', onclick: () => endorse(t, s) }, icon('check'), 'Endorse'),
+      h('button', { class: 'btn sm quiet danger', disabled: mineVote?.verdict === 'reject', onclick: () => challenge(t, s) }, icon('x'), 'Challenge')))
 }
 
 function renderTask (job, t) {
-  const live = job.status !== 'closed' && t.status !== 'done'
+  const live = job.status === 'active' && t.status !== 'done'
   const mineHeld = t.holder?.mine
   return h('div', { class: `task ${t.status}` },
-    h('div', { class: 'task-head' }, h('span', { class: 't' }, t.title), h('span', { class: 'ref' }, t.ref), pill(t.status)),
+    h('div', { class: 'task-head' }, h('span', { class: 't' }, t.title), t.final && h('span', { class: 'badge' }, 'final'), h('span', { class: 'ref' }, t.ref), pill(t.status, t.status === 'blocked' ? 'waiting' : t.status)),
     t.description ? h('div', { class: 'desc' }, t.description) : null,
-    t.holder && t.status !== 'done' ? h('div', { class: 'meta' }, avatar(t.holder.peer, t.holder.nick, 'xs'),
+    t.holder ? h('div', { class: 'meta' }, avatar(t.holder.peer, t.holder.nick, 'xs'),
       `${mineHeld ? 'You are' : `${t.holder.nick} is`} working on this · lease until ${clock(t.holder.expires)}`) : null,
-    live && h('div', { class: 'actions' },
-      !t.holder && h('button', { class: 'btn sm', onclick: () => act('claim', { task: t.id }, 'Claimed') }, 'Claim'),
+    t.status === 'blocked' ? h('div', { class: 'meta' }, `Waiting for: ${t.blockedBy.map((b) => b.title).join(', ')}`) : null,
+    live && t.status !== 'blocked' && h('div', { class: 'actions' },
+      !t.holder && h('button', { class: 'btn sm', onclick: () => act('claim', { task: t.id }, 'Claimed') }, 'Take it'),
       mineHeld && h('button', { class: 'btn sm', onclick: () => act('release', { task: t.id }, 'Released') }, 'Release'),
-      (mineHeld || !t.holder) && h('button', { class: 'btn sm', onclick: () => submitResult(t) }, 'Submit result')),
-    t.submissions.map((s) => renderSubmission(job, t, s, live)))
+      (mineHeld || !t.holder) && h('button', { class: 'btn sm', onclick: () => submitResult(t) }, 'Submit a result')),
+    t.submissions.map((s) => renderSubmission(job, t, s)))
 }
 
 function paneTasks (swarm) {
   const job = swarm.jobs.find((j) => j.id === S.jobId)
-  if (!job) return h('div', { class: 'empty' }, 'Select a job above to see its tasks, who is working on them, and their results.')
+  if (!job) return h('div', { class: 'empty' }, 'Select a job above to see its plan, who is working on what, and the results.')
   const workers = workersOf([job])
   return [
     h('div', { class: 'job-head' },
       h('h2', null, job.title), pill(job.status),
-      job.mine && job.status !== 'closed' && h('button', { class: 'btn sm', onclick: async () => {
-        const v = await ask({ title: 'Add a task', fields: [{ name: 'title', label: 'Title', max: 200 }, { name: 'description', label: 'Details', type: 'textarea', required: false }], submit: 'Add task' })
+      job.status === 'active' && h('button', { class: 'btn sm', onclick: async () => {
+        const v = await ask({ title: 'Add a task', text: 'Anyone in the swarm can extend the plan. The final task waits for every task added.', fields: [{ name: 'title', label: 'Title', max: 200 }, { name: 'description', label: 'Details', type: 'textarea', required: false }], submit: 'Add task' })
         if (v) act('add_task', { job: job.id, ...v }, 'Task added')
       } }, icon('plus'), 'Add task'),
       job.mine && job.status !== 'closed' && h('button', { class: 'btn sm danger', onclick: async () => {
@@ -426,6 +434,10 @@ function paneTasks (swarm) {
       `Posted by ${job.mine ? 'you' : job.nick} · ${ago(job.ts)} · ${job.done}/${job.total} done · ${plural(workers.length, 'agent')} working`,
       h('span', { class: 'ref' }, job.ref)),
     h('div', { class: 'desc' }, job.description || ''),
+    job.result && h('div', { class: 'result' },
+      h('div', { class: 'task-head' }, h('span', { class: 't' }, 'Final result'), pill('done', 'delivered')),
+      h('div', { class: 'meta' }, `${job.result.summary} · by ${job.result.nick} · ${job.result.bytes.toLocaleString()} chars`),
+      h('pre', null, job.result.preview + (job.result.truncated ? '\n… (truncated: ask Claude for the full result)' : ''))),
     job.tasks.map((t) => renderTask(job, t))
   ]
 }
@@ -475,8 +487,8 @@ function describe (e) {
     case 'task.add': return ['job', `${who} added task “${e.title}”`]
     case 'task.claim': return ['claim', `${who} started working on “${task}”`]
     case 'task.release': return ['', `${who} released “${task}”`]
-    case 'task.submit': return ['submit', `${who} submitted a result for “${task}”: ${e.summary}`]
-    case 'task.review': return [e.verdict, `${who} ${e.verdict}ed a result for “${task}”`]
+    case 'task.submit': return ['accept', `${who} finished “${task}”: ${e.summary}`]
+    case 'task.review': return [e.verdict, `${who} ${e.verdict === 'accept' ? 'endorsed' : 'challenged'} the result for “${task}”${e.note ? `: ${e.note}` : ''}`]
     case 'job.close': return ['', `${who} closed a job`]
     case 'msg': return ['msg', `${who}: ${e.text}`]
     case 'swarm.advert': return ['', `${who} advertised the swarm “${e.name}”`]

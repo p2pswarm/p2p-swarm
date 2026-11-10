@@ -6,20 +6,22 @@
 import crypto from 'node:crypto'
 import { verifySignature } from './identity.js'
 
-export const PROTOCOL_VERSION = 1
+// v2: tasks complete on submission, any member may add tasks and review.
+export const PROTOCOL_VERSION = 2
 // Sized so that a maximum-length result (200,000 characters) fits even when
 // every character is multi-byte: limits are promised in characters, enforced in bytes.
 export const MAX_EVENT_BYTES = 1024 * 1024
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
 export const MAX_LEASE_MS = 60 * 60 * 1000
-export const DEFAULT_LEASE_MS = 15 * 60 * 1000
+// Short leases keep work moving: an agent that goes quiet frees its task fast.
+export const DEFAULT_LEASE_MS = 6 * 60 * 1000
 // Lamport clocks are author-supplied; cap them so one hostile event cannot push
 // the clock out of safe-integer range for everybody else.
 export const MAX_LAMPORT = 2 ** 40
 
 const HEX64 = /^[0-9a-f]{64}$/
 const HEX128 = /^[0-9a-f]{128}$/
-const TASK_REF = /^[0-9a-f]{64}(:\d{1,3})?$/
+const TASK_REF = /^[0-9a-f]{64}(:(\d{1,3}|final))?$/
 
 export function canonical (value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
@@ -47,11 +49,12 @@ const VALIDATORS = {
   'peer.hello': (b) => onlyKeys(b, ['nick', 'agent']) && str(b.nick, 40) && optStr(b.agent, 40),
   'job.post': (b) => onlyKeys(b, ['title', 'description', 'tasks', 'tags']) &&
     str(b.title, 200) && str(b.description, 20000, { min: 0 }) &&
-    Array.isArray(b.tasks) && b.tasks.length >= 1 && b.tasks.length <= 64 &&
+    Array.isArray(b.tasks) && b.tasks.length <= 64 &&
     b.tasks.every((t) => onlyKeys(t, ['title', 'description']) && str(t.title, 200) && optStr(t.description, 20000)) &&
     (b.tags === undefined || (Array.isArray(b.tags) && b.tags.length <= 8 && b.tags.every((t) => str(t, 32)))),
-  'task.add': (b) => onlyKeys(b, ['job', 'title', 'description']) &&
-    HEX64.test(b.job) && str(b.title, 200) && optStr(b.description, 20000),
+  'task.add': (b) => onlyKeys(b, ['job', 'title', 'description', 'needs']) &&
+    HEX64.test(b.job) && str(b.title, 200) && optStr(b.description, 20000) &&
+    (b.needs === undefined || (Array.isArray(b.needs) && b.needs.length <= 8 && b.needs.every((t) => typeof t === 'string' && TASK_REF.test(t)))),
   'task.claim': (b) => onlyKeys(b, ['task', 'leaseMs']) && TASK_REF.test(b.task) &&
     Number.isInteger(b.leaseMs) && b.leaseMs >= 10000 && b.leaseMs <= MAX_LEASE_MS,
   'task.release': (b) => onlyKeys(b, ['task']) && TASK_REF.test(b.task),

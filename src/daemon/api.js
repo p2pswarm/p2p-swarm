@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { actions, getState, getJob, describeEvent } from './actions.js'
+import { actions, getState, getJob, describeEvent, workAvailable } from './actions.js'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
 const STATIC = {
@@ -92,6 +92,7 @@ export function createApi (node, { token, version, onShutdown }) {
       if (req.method === 'GET') {
         if (url.pathname === '/api/ping') return send(res, 200, { ok: true, name: 'p2p-swarm', version, id: node.id })
         if (url.pathname === '/api/state') return send(res, 200, getState(node))
+        if (url.pathname === '/api/work') return send(res, 200, workAvailable(node, url.searchParams.get('swarm') || undefined))
         if (url.pathname === '/api/job') return send(res, 200, getJob(node, url.searchParams.get('ref'), url.searchParams.get('swarm')))
         if (url.pathname === '/api/events') {
           const since = Math.max(0, Number(url.searchParams.get('since')) || 0)

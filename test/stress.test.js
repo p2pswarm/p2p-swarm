@@ -196,7 +196,8 @@ test('the reducer is order-independent and total on arbitrary valid histories', 
       if (!job || roll === 0) jobs.push({ e: n.publish(swarm.topic, 'job.post', { title: `j${i}`, description: '', tasks: [{ title: 'x' }, { title: 'y' }] }), owner: n })
       else if (roll < 4) n.publish(swarm.topic, 'task.claim', { task: `${job.e.id}:${rnd(2)}`, leaseMs: 10000 + rnd(50000) })
       else if (roll < 6) { const task = `${job.e.id}:${rnd(2)}`; subs.push({ task, job, e: n.publish(swarm.topic, 'task.submit', { task, summary: 's', content: 'c' }) }) }
-      else if (roll < 8 && subs.length) { const s = subs[rnd(subs.length)]; s.job.owner.publish(swarm.topic, 'task.review', { task: s.task, submission: s.e.id, verdict: rnd(2) ? 'accept' : 'reject' }) }
+      else if (roll < 8 && subs.length) { const s = subs[rnd(subs.length)]; n.publish(swarm.topic, 'task.review', { task: s.task, submission: s.e.id, verdict: rnd(2) ? 'accept' : 'reject' }) }
+      else if (roll === 8 && rnd(2)) n.publish(swarm.topic, 'task.add', { job: job.e.id, title: `extra ${i}`, needs: [`${job.e.id}:${rnd(2)}`] })
       else if (roll === 8) n.publish(swarm.topic, 'task.release', { task: `${job.e.id}:${rnd(2)}` })
       else if (rnd(8) === 0) job.owner.publish(swarm.topic, 'job.close', { job: job.e.id })
       else n.publish(swarm.topic, 'msg', { text: `m${i}`, job: job.e.id })
@@ -218,8 +219,11 @@ test('the reducer is order-independent and total on arbitrary valid histories', 
   for (const n of nodes) assert.equal(snapshot([...n.swarms.get(swarm.topic).events.values()]), reference)
   const v = reduce(events, { now: 0 })
   for (const task of v.tasks.values()) {
-    assert.ok(['open', 'claimed', 'submitted', 'done'].includes(task.status))
-    if (task.done) assert.equal(task.submissions.filter((s) => s.verdict === 'accept').length, 1)
+    assert.ok(['open', 'claimed', 'blocked', 'done'].includes(task.status))
+    assert.equal(task.done, task.submissions.some((s) => s.standing))
+    assert.equal(task.done, task.accepted !== null)
+    if (task.status === 'blocked') assert.ok(task.blockedBy.length > 0)
+    if (task.final && task.done) assert.ok(v.jobs.get(task.job).taskIds.every((id) => v.tasks.get(id).submissions.length > 0))
   }
 })
 
@@ -279,10 +283,13 @@ test('short references are resolved safely', async (t) => {
   await assert.rejects(act('submit', { task: `${job.job}:1`, summary: 's' }), /"result" is required/)
   await assert.rejects(act('submit', { task: `${job.job}:1`, summary: 's', result: '' }), /"result" is required/)
   await assert.rejects(act('review', { task: `${job.job}:1`, verdict: 'accept' }), /no matching submission/)
+  await assert.rejects(act('claim', { task: `${job.job}:final` }), /waiting for/)
   await act('submit', { task: `${job.job}:1`, summary: 's', result: 'r1' })
-  await act('submit', { task: `${job.job}:1`, summary: 's', result: 'r2' })
-  await assert.rejects(act('review', { task: `${job.job}:1`, verdict: 'accept' }), /several submissions/)
-  await assert.rejects(act('review', { task: `${job.job}:1`, verdict: 'maybe' }), /several submissions|verdict/)
+  await assert.rejects(act('claim', { task: `${job.job}:1` }), /already done/)
+  await assert.rejects(act('review', { task: `${job.job}:1`, verdict: 'accept' }), /cannot review your own/)
+  await assert.rejects(act('add_task', { job: job.job, title: 'x', needs: [`${job.job}:final`] }), /cannot depend on the final task/)
+  await assert.rejects(act('add_task', { job: job.job, title: 'x', needs: ['ffffffffff:0'] }), /no task matches/)
+  assert.deepEqual((await act('add_task', { job: job.job, title: 'x', needs: [`${job.job}:0`] })).needs, [`${job.job}:0`])
   await assert.rejects(act('leave_swarm', { swarm: 'nope' }), /no joined swarm/)
   await assert.rejects(act('advertise', { swarm: 'Alpha' }), /no joined swarm matches "lobby"/)
   await assert.rejects(act('advertise', { swarm: 'Alpha', in: 'Alpha' }), /inside itself/)

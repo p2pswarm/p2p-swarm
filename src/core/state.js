@@ -4,11 +4,25 @@
 // same deterministic order (lamport, then id), so every peer converges on the
 // same view without any coordinator.
 //
-// Authority rules (enforced here, not by the network):
-//   - only a job's author can add tasks to it, review submissions, or close it
-//   - anyone may claim an unheld task; a claim is a time-limited lease
-//   - anyone may submit a result; the job author decides which one is accepted
+// The rules are built for a swarm that runs itself:
+//   - Anyone may add tasks to a job, so agents break work down as they go.
+//   - A task may depend on others (`needs`) and is blocked until they are done.
+//   - Every job has a built-in final task that unlocks when all the others are
+//     done. Its result is the job's result.
+//   - Anyone may claim a free task; a claim is a short lease.
+//   - A submitted result completes its task at once. Nobody has to approve it.
+//   - Any other peer may endorse or challenge a result. A result stands while
+//     it has at least as many endorsements as challenges; the job's poster,
+//     if they vote, has the final word. A task whose results have all fallen
+//     is open again.
+//   - Only the poster can close a job.
 import { compareEvents } from './events.js'
+
+export const MAX_TASKS_PER_JOB = 200
+export const FINAL_TITLE = 'Deliver the final result'
+export const FINAL_DESCRIPTION =
+  'Produce the single deliverable this job asks for, using the results of the other tasks. ' +
+  'If the job has no other tasks yet, either do the whole job here, or split it into tasks first.'
 
 export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) {
   const sorted = events.filter((e) => !blocked.has(e.author)).sort(compareEvents)
@@ -29,19 +43,39 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
     return p
   }
 
-  const addTask = (job, id, title, description, e) => {
+  const scoreOf = (s) => {
+    let score = 0
+    for (const v of s.votes.values()) score += v === 'accept' ? 1 : -1
+    return score
+  }
+  const stands = (job, s) => {
+    const posterVote = s.author !== job.author ? s.votes.get(job.author) : undefined
+    return posterVote ? posterVote === 'accept' : scoreOf(s) >= 0
+  }
+  const isDone = (t) => {
+    const job = jobs.get(t.job)
+    return t.submissions.some((s) => stands(job, s))
+  }
+  const waitingOn = (t) => {
+    const job = jobs.get(t.job)
+    const deps = t.final ? job.taskIds : t.needs
+    return deps.filter((id) => !isDone(tasks.get(id)))
+  }
+
+  const addTask = (job, id, title, description, e, extra = {}) => {
     tasks.set(id, {
       id,
       job: job.id,
       title,
       description: description || '',
+      author: e.author,
       ts: e.ts,
+      needs: [],
+      final: false,
       holder: null,
       submissions: [],
-      done: false,
-      accepted: null
+      ...extra
     })
-    job.taskIds.push(id)
   }
 
   for (const e of sorted) {
@@ -63,23 +97,31 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
           ts: e.ts,
           closed: false,
           closeNote: null,
-          taskIds: []
+          taskIds: [],
+          finalId: `${e.id}:final`
         }
         jobs.set(job.id, job)
-        b.tasks.forEach((t, i) => addTask(job, `${e.id}:${i}`, t.title, t.description, e))
+        b.tasks.forEach((t, i) => {
+          addTask(job, `${e.id}:${i}`, t.title, t.description, e)
+          job.taskIds.push(`${e.id}:${i}`)
+        })
+        addTask(job, job.finalId, FINAL_TITLE, FINAL_DESCRIPTION, e, { final: true })
         break
       }
 
       case 'task.add': {
         const job = jobs.get(b.job)
-        if (!job || job.author !== e.author || job.closed) break
-        addTask(job, e.id, b.title, b.description, e)
+        if (!job || job.closed || job.taskIds.length >= MAX_TASKS_PER_JOB) break
+        if (isDone(tasks.get(job.finalId))) break // the job is finished
+        const needs = [...new Set(b.needs || [])].filter((id) => id !== job.finalId && tasks.get(id)?.job === job.id)
+        addTask(job, e.id, b.title, b.description, e, { needs })
+        job.taskIds.push(e.id)
         break
       }
 
       case 'task.claim': {
         const t = tasks.get(b.task)
-        if (!t || t.done || jobs.get(t.job).closed) break
+        if (!t || jobs.get(t.job).closed || isDone(t) || waitingOn(t).length) break
         const free = !t.holder || t.holder.expires <= e.ts || t.holder.peer === e.author
         if (free) t.holder = { peer: e.author, since: t.holder?.peer === e.author ? t.holder.since : e.ts, expires: e.ts + b.leaseMs }
         break
@@ -93,37 +135,19 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
 
       case 'task.submit': {
         const t = tasks.get(b.task)
-        if (!t || t.done || jobs.get(t.job).closed) break
-        t.submissions.push({
-          id: e.id,
-          author: e.author,
-          summary: b.summary,
-          content: b.content,
-          ts: e.ts,
-          verdict: null,
-          note: null
-        })
+        if (!t || jobs.get(t.job).closed || waitingOn(t).length) break
+        t.submissions.push({ id: e.id, author: e.author, summary: b.summary, content: b.content, ts: e.ts, votes: new Map(), reviews: [] })
+        if (t.holder && t.holder.peer === e.author) t.holder = null
         break
       }
 
       case 'task.review': {
         const t = tasks.get(b.task)
-        if (!t || t.done) break
-        const job = jobs.get(t.job)
-        if (job.author !== e.author) break
-        const s = t.submissions.find((x) => x.id === b.submission)
-        if (!s || s.verdict) break
-        s.verdict = b.verdict
-        s.note = b.note || null
-        if (b.verdict === 'accept') {
-          t.done = true
-          t.accepted = s.id
-          t.holder = null
-        } else if (t.holder && t.holder.peer === s.author) {
-          // A rejected worker loses the lease, so the task is immediately
-          // available to everyone (including them) instead of sitting locked.
-          t.holder = null
-        }
+        const s = t && t.submissions.find((x) => x.id === b.submission)
+        if (!s || s.author === e.author) break // nobody reviews their own work
+        s.votes.set(e.author, b.verdict)
+        s.reviews = s.reviews.filter((r) => r.peer !== e.author)
+        s.reviews.push({ peer: e.author, verdict: b.verdict, note: b.note || null, ts: e.ts })
         break
       }
 
@@ -146,16 +170,37 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
     }
   }
 
-  for (const t of tasks.values()) {
-    const pending = t.submissions.some((s) => !s.verdict)
-    if (t.holder && t.holder.expires <= now) t.holder = null
-    t.status = t.done ? 'done' : pending ? 'submitted' : t.holder ? 'claimed' : 'open'
+  for (const job of jobs.values()) {
+    for (const id of [...job.taskIds, job.finalId]) {
+      const t = tasks.get(id)
+      let best = null
+      for (const s of t.submissions) {
+        s.score = scoreOf(s)
+        s.standing = stands(job, s)
+        s.posterVote = s.author !== job.author ? s.votes.get(job.author) || null : null
+        if (!s.standing) continue
+        const rank = (x) => [x.posterVote === 'accept' ? 1 : 0, x.score, x.ts]
+        const a = rank(s)
+        const c = best && rank(best)
+        if (!best || a[0] > c[0] || (a[0] === c[0] && (a[1] > c[1] || (a[1] === c[1] && a[2] >= c[2])))) best = s
+      }
+      t.done = Boolean(best)
+      t.accepted = best ? best.id : null
+    }
   }
   for (const job of jobs.values()) {
-    const list = job.taskIds.map((id) => tasks.get(id))
-    job.done = list.filter((t) => t.done).length
-    job.total = list.length
-    job.status = job.closed ? 'closed' : job.done === job.total ? 'complete' : 'active'
+    const all = [...job.taskIds, job.finalId].map((id) => tasks.get(id))
+    for (const t of all) {
+      t.blockedBy = t.done ? [] : (t.final ? job.taskIds : t.needs).filter((id) => !tasks.get(id).done)
+      if (t.holder && (t.done || t.holder.expires <= now)) t.holder = null
+      t.status = t.done ? 'done' : t.blockedBy.length ? 'blocked' : t.holder ? 'claimed' : 'open'
+    }
+    const final = tasks.get(job.finalId)
+    job.done = all.filter((t) => t.done).length
+    job.total = all.length
+    job.status = job.closed ? 'closed' : final.done ? 'complete' : 'active'
+    const result = final.done ? final.submissions.find((s) => s.id === final.accepted) : null
+    job.result = result ? { id: result.id, author: result.author, summary: result.summary, content: result.content, ts: result.ts } : null
   }
 
   return { peers, jobs, tasks, messages, adverts }

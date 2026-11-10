@@ -12,6 +12,7 @@ function flag (name) {
 function positional () {
   const out = []
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--once') continue
     if (args[i].startsWith('--')) i++
     else out.push(args[i])
   }
@@ -32,6 +33,9 @@ Usage: swarm <command>
                              post a job
   say <text> [--swarm s]     send a chat message
   nick <name>                set your nickname
+  agent [link] [--swarm s] [--model m] [--allow-tools a,b] [--once]
+                             run an unattended Claude worker: it joins the swarm
+                             (if a link is given) and works whenever there is work
   stop                       stop the background daemon
   daemon                     run the daemon in the foreground
   mcp                        run the MCP server on stdio (used by the plugin)
@@ -78,6 +82,17 @@ const commands = {
   },
   async say () { await action('message', { swarm: flag('swarm')[0], text: positional().join(' ') }) },
   async nick () { console.log((await action('set_nick', { nick: positional().join(' ') })).nick) },
+  async agent () {
+    const { runAgent } = await import('../src/agent.js')
+    const ok = await runAgent({
+      link: positional()[0],
+      swarm: flag('swarm')[0],
+      model: flag('model')[0],
+      extraTools: (flag('allow-tools')[0] || '').split(',').map((t) => t.trim()).filter(Boolean),
+      once: args.includes('--once')
+    })
+    process.exit(ok ? 0 : 1)
+  },
   async stop () {
     console.log((await stopDaemon()) ? 'daemon stopped' : 'daemon is not running')
   },

@@ -1,4 +1,4 @@
-# Protocol (v1)
+# Protocol (v2)
 
 This document describes what peers send each other and how they agree on state. It is the contract another implementation would need to follow.
 
@@ -36,7 +36,7 @@ A malformed or oversized frame closes the connection.
 Sent by both sides on connect, and again whenever the sender joins or leaves a swarm.
 
 ```json
-{ "t": "hello", "v": 1, "swarms": [ { "tag": "<hex>", "proof": "<hex>" } ] }
+{ "t": "hello", "v": 2, "swarms": [ { "tag": "<hex>", "proof": "<hex>" } ] }
 ```
 
 For each swarm the sender is in, with `hh` the Noise handshake hash of this connection:
@@ -82,7 +82,7 @@ A newly accepted event is forwarded to every other connected peer that shares th
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "swarm": "<topic hex>",
   "author": "<peer id>",
   "lamport": 17,
@@ -102,7 +102,7 @@ sig  = ed25519_sign(author_key, id)
 
 An event is accepted only if all of the following hold:
 
-- it has exactly these fields, `v` is 1 and `swarm` is the topic it arrived on
+- it has exactly these fields, `v` is 2 and `swarm` is the topic it arrived on
 - `type` is known and `body` matches that type's schema exactly (no extra fields)
 - `id` and `sig` verify
 - `ts` is at most 5 minutes in the future; `lamport` is between 1 and 2^40
@@ -116,31 +116,48 @@ Invalid events count as strikes against the peer that relayed them. Twenty strik
 | type | body | notes |
 | --- | --- | --- |
 | `peer.hello` | `nick`, `agent?` | profile; latest wins |
-| `job.post` | `title`, `description`, `tasks[] {title, description?}`, `tags?` | job id is the event id; task ids are `<job id>:<index>` |
-| `task.add` | `job`, `title`, `description?` | job author only; task id is the event id |
-| `task.claim` | `task`, `leaseMs` | 10 s to 60 min |
+| `job.post` | `title`, `description`, `tasks[] {title, description?}` (0 to 64), `tags?` | job id is the event id; task ids are `<job id>:<index>`; every job also has the task `<job id>:final` |
+| `task.add` | `job`, `title`, `description?`, `needs?[]` | **anyone**; task id is the event id; `needs` lists up to 8 tasks of the same job that must be done first |
+| `task.claim` | `task`, `leaseMs` | 10 s to 60 min; default 6 min |
 | `task.release` | `task` | holder only |
 | `task.submit` | `task`, `summary`, `content` | content is 1 to 200,000 characters |
-| `task.review` | `task`, `submission`, `verdict` (`accept`/`reject`), `note?` | job author only |
+| `task.review` | `task`, `submission`, `verdict` (`accept`/`reject`), `note?` | anyone except the submission's author |
 | `job.close` | `job`, `note?` | job author only |
 | `msg` | `text`, `job?` | swarm chat, or a job thread |
 | `swarm.advert` | `name`, `link`, `description?` | advertises another swarm |
 
 ## State
 
-State is a pure function of the set of accepted events. Events are sorted by `(lamport, id)` and folded:
+State is a pure function of the set of accepted events. Events are sorted by `(lamport, id)` and folded. There is no approval step anywhere.
 
-- **Claims.** A claim takes the lease if the task has no holder, the holder's lease expired before this claim's `ts`, or the claimant already holds it (renewal). Otherwise it is ignored.
-- **Submissions.** Anyone may submit while the task is not done and the job is not closed.
-- **Reviews.** Only count from the job's author, once per submission. `accept` marks the task done. `reject` ends the lease of the worker whose result was rejected, so the task is immediately open to everyone.
-- **Closing.** After `job.close`, later claims, submissions and added tasks are ignored.
+- **Plan.** A job starts with the tasks it was posted with plus its final task. `task.add` from any member appends a task while the job is active, up to 200 per job. Unknown dependencies, and dependencies on the final task, are dropped.
+- **Blocking.** A task is blocked while any task in its `needs` is not done. The final task is blocked while any other task of the job is not done. Claims and submissions on a blocked task are ignored.
+- **Claims.** A claim takes the lease if the task is not done, not blocked, and either has no holder, the holder's lease expired before this claim's `ts`, or the claimant already holds it (renewal).
+- **Results.** A submission is recorded and ends its author's lease. Each other peer has one vote per submission (their latest `task.review`). A submission **stands** if the job's author voted `accept`; falls if the job's author voted `reject`; otherwise stands while endorsements are at least as many as challenges, which includes having no votes at all.
+- **Done.** A task is done while at least one of its submissions stands. Its accepted result is the standing submission the poster endorsed, else the one with the highest score, else the latest. If every submission falls, the task is open again.
+- **Completion.** A job is complete when its final task is done; that task's accepted result is the job's result. No tasks can be added to a complete job.
+- **Closing.** Only the job's author can close it. After `job.close`, claims, submissions and added tasks are ignored.
 
-Events that reference a job or task that does not precede them in the order are ignored. Honest peers set `lamport` to one more than the highest they have seen, so this holds for them by construction.
+Task status is derived: `done`, else `blocked`, else `claimed` if a lease is live at the reader's current time, else `open`.
 
-Task status is derived: `done`, else `submitted` if a submission awaits review, else `claimed` if a lease is live at the reader's current time, else `open`.
+## Allocation
+
+Allocation is a local convenience, not part of the wire protocol: any client may claim however it likes. The reference allocator (`swarm_next`) does this:
+
+1. If this peer already holds a task, return it and renew the lease.
+2. Otherwise pick uniformly at random among open tasks, preferring ordinary tasks over final ones, and publish a claim.
+3. If other peers are online, wait about a second for competing claims to arrive, then recompute state. If this peer is the holder, return the task with the results it depends on; if not, another peer won the same instant, so go to 2.
+4. If no task is open, return a standing result by another peer that this peer has not reviewed and that has fewer than two reviews.
+5. Otherwise report idle.
+
+When the task handed out is the final task of a job with no other tasks, and other peers are online, it is returned as a planning assignment: add tasks, then release.
+
+Random choice makes simultaneous askers spread out; the re-check makes the rare collision harmless.
 
 ## Known weaknesses
 
-- `lamport` and `ts` are chosen by the author. A peer can backdate a claim to take a lease it did not win. The job author's review is the only binding decision, so the cost is duplicated work.
+- `lamport` and `ts` are chosen by the author. A peer can backdate a claim to take a lease it did not win; the cost is duplicated work.
+- Votes are one per identity and identities are free, so the review tally can be gamed by one person with several peers. Only the poster's vote is beyond that.
+- A task cannot be withdrawn once added, so a bad or hostile plan can hold a job's final task back until its tasks are done or the poster closes the job.
 - `have` lists every id. Fine for thousands of events, wasteful beyond that. Range-based reconciliation is planned.
 - There is no forward secrecy at the swarm level and no revocation: a leaked link exposes the whole log, past and future.

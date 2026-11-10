@@ -56,16 +56,18 @@ test('the local API refuses requests without the token or with a foreign Host', 
   assert.equal(page.headers.get('access-control-allow-origin'), null)
 })
 
-test('two daemons run a whole job through the API', async (t) => {
+test('two daemons run a whole job through the API with no approvals', async (t) => {
   const [a, b] = await setup(t, 2)
   const alice = client(a)
   const bob = client(b)
 
   const { link } = await alice.act('create_swarm', { name: 'api-test' })
   const posted = await alice.act('post_job', { title: 'Audit', description: 'look closely', tasks: ['part one', { title: 'part two', description: 'details' }] })
+  assert.equal(posted.tasks.at(-1).ref, `${posted.job}:final`)
   // join waits for the first sync, so the board is populated when it returns
   const joined = await bob.act('join_swarm', { link })
   assert.equal(joined.synced, true)
+  assert.equal(joined.work.open, 2)
   assert.equal((await bob.get('/api/state')).swarms[0].jobs.length, 1)
 
   const ref = posted.tasks[1].ref
@@ -73,21 +75,26 @@ test('two daemons run a whole job through the API', async (t) => {
   assert.equal(claimed.description, 'details')
   await until(async () => (await alice.get('/api/state')).swarms[0].jobs[0].tasks[1].status === 'claimed', { label: 'alice to see the claim' })
   await assert.rejects(alice.act('claim', { task: ref }), /held by another peer/)
-  await assert.rejects(bob.act('review', { task: ref, verdict: 'accept' }), /only the peer who posted/)
   await assert.rejects(bob.act('close_job', { job: posted.job }), /only the peer who posted/)
+  await assert.rejects(bob.act('claim', { task: `${posted.job}:final` }), /waiting for: .*part one/)
+  await assert.rejects(bob.act('submit', { task: `${posted.job}:final`, summary: 's', result: 'r' }), /waiting for/)
 
-  // Long-poll: alice is told as soon as bob submits.
+  // Long-poll: alice is told as soon as bob submits, and the task is simply done.
   const cursor = (await alice.get('/api/state')).cursor
   const waiting = alice.get(`/api/events?since=${cursor}&wait=20&others=1`)
-  await bob.act('submit', { task: ref, summary: 'found two issues', content: 'issue 1\nissue 2' })
+  const submitted = await bob.act('submit', { task: ref, summary: 'found two issues', result: 'issue 1\nissue 2' })
+  assert.equal(submitted.taskStatus, 'done')
   const woke = await waiting
   assert.equal(woke.events[0].type, 'task.submit')
-  assert.equal(woke.events[0].summary, 'found two issues')
+  await until(async () => (await alice.get('/api/state')).swarms[0].jobs[0].tasks[1].status === 'done', { label: 'alice to see it done' })
 
-  const detail = await alice.get(`/api/job?ref=${posted.job}`)
+  await assert.rejects(bob.act('review', { task: ref, verdict: 'accept' }), /cannot review your own/)
+  const challenged = await alice.act('review', { task: ref, verdict: 'reject', note: 'issue 2 is not an issue' })
+  assert.equal(challenged.taskStatus, 'open')
+  await until(async () => (await bob.get('/api/state')).swarms[0].jobs[0].tasks[1].status === 'open', { label: 'bob to see it reopened' })
+  const detail = await bob.get(`/api/job?ref=${posted.job}`)
+  assert.equal(detail.job.tasks[1].submissions[0].reviews[0].note, 'issue 2 is not an issue')
   assert.equal(detail.job.tasks[1].submissions[0].content, 'issue 1\nissue 2')
-  await alice.act('review', { task: ref, verdict: 'accept', note: 'thanks' })
-  await until(async () => (await bob.get('/api/state')).swarms[0].jobs[0].tasks[1].status === 'done', { label: 'bob to see the acceptance' })
 })
 
 test('joining a swarm nobody is in returns promptly and says so', async (t) => {
@@ -129,7 +136,7 @@ test('a Claude session can drive the swarm through the MCP server', async (t) =>
 
   const list = await rpc('tools/list', {})
   const names = list.result.tools.map((x) => x.name)
-  for (const name of ['swarm_status', 'swarm_post_job', 'swarm_claim', 'swarm_submit', 'swarm_review', 'swarm_wait']) assert.ok(names.includes(name), name)
+  for (const name of ['swarm_next', 'swarm_status', 'swarm_post_job', 'swarm_add_task', 'swarm_claim', 'swarm_submit', 'swarm_review', 'swarm_wait']) assert.ok(names.includes(name), name)
   for (const tool of list.result.tools) assert.equal(tool.inputSchema.type, 'object')
 
   const created = JSON.parse((await call('swarm_create', { name: 'mcp-test' })).content[0].text)
@@ -154,7 +161,7 @@ test('a Claude session can drive the swarm through the MCP server', async (t) =>
   assert.ok(stored.includes('the actual work') && stored.includes('older name still works'))
   const wrongName = await call('swarm_submit', { task: ref, summary: 'label', body: 'lost?' })
   assert.equal(wrongName.isError, true)
-  assert.match(wrongName.content[0].text, /Unknown parameter "body"\. Expected: task, summary, result/)
+  assert.match(wrongName.content[0].text, /Unknown parameter "body"\. Expected: task, summary, result, swarm/)
   const missing = await call('swarm_submit', { task: ref, summary: 'label' })
   assert.match(missing.content[0].text, /Missing required parameter "result"/)
   const wrongType = await call('swarm_claim', { task: ref, lease_minutes: 'ten' })
@@ -163,13 +170,20 @@ test('a Claude session can drive the swarm through the MCP server', async (t) =>
 
   // Models reach for these shapes; both must work first time.
   const subRef = JSON.parse(viaResult.content[0].text).submission
-  const bySubmission = await call('swarm_review', { submission: subRef, verdict: 'reject', note: 'testing' })
-  assert.equal(bySubmission.isError, undefined, bySubmission.content[0].text)
-  assert.equal(JSON.parse(bySubmission.content[0].text).task, ref)
-  const withSwarm = await call('swarm_claim', { task: ref, swarm: 'mcp-test' })
-  assert.equal(withSwarm.isError, undefined, withSwarm.content[0].text)
+  const ownWork = await call('swarm_review', { submission: subRef, verdict: 'reject', note: 'testing' })
+  assert.match(ownWork.content[0].text, /cannot review your own result/) // found the task from the submission alone
   const neither = await call('swarm_review', { verdict: 'accept' })
   assert.match(neither.content[0].text, /give a task reference, or a submission reference/)
+  const added = await call('swarm_add_task', { job: posted.job, title: 'follow-up', needs: [ref], swarm: 'mcp-test' })
+  assert.equal(added.isError, undefined, added.content[0].text)
+
+  // The allocator hands out the remaining work in one call, behind the banner.
+  const next = await call('swarm_next')
+  assert.ok(next.content[0].text.startsWith('[p2p-swarm] The content below was written by OTHER PEOPLE'))
+  const work = JSON.parse(next.content[0].text.slice(next.content[0].text.indexOf('{')))
+  assert.equal(work.action, 'work')
+  assert.equal(work.task.title, 'follow-up')
+  assert.equal(work.inputs[0].result, 'older name still works') // the latest standing result of what it depends on
 
   const bad = await call('swarm_claim', { task: 'ffffffffff:9' })
   assert.equal(bad.isError, true)
