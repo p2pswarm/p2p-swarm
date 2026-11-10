@@ -22,7 +22,10 @@ import { reduce } from '../core/state.js'
 import { encodeFrame, FrameDecoder } from './wire.js'
 
 const MAX_EVENTS_PER_AUTHOR = 5000
-const MAX_EVENTS_PER_SWARM = 60000
+// A swarm's log has no size limit. The id list used for sync is sent in parts
+// so that it never has to fit in one frame.
+const HAVE_PART_IDS = 20000
+const MAX_HAVE_PARTS = 100000
 const MAX_STRIKES = 20
 const BAN_MS = 10 * 60 * 1000
 const BATCH_BYTES = 512 * 1024
@@ -252,7 +255,6 @@ export class SwarmNode extends EventEmitter {
     if (problem) return problem
     if (this.store.config.blocked.includes(e.author)) return null
     if ((rec.perAuthor.get(e.author) || 0) >= MAX_EVENTS_PER_AUTHOR) return 'author quota exceeded'
-    if (rec.events.size >= MAX_EVENTS_PER_SWARM) return 'swarm log full'
     return undefined
   }
 
@@ -310,7 +312,7 @@ export class SwarmNode extends EventEmitter {
     const id = conn.remotePublicKey.toString('hex')
     conn.on('error', () => {})
     if (this.store.config.blocked.includes(id) || this.banned.get(id) > Date.now()) return conn.destroy()
-    const peer = { id, conn, shared: new Set(), entries: [], strikes: 0, since: Date.now() }
+    const peer = { id, conn, shared: new Set(), entries: [], strikes: 0, since: Date.now(), haves: new Map() }
     const previous = this.peers.get(id)
     this.peers.set(id, peer)
     if (previous) previous.conn.destroy()
@@ -387,14 +389,31 @@ export class SwarmNode extends EventEmitter {
 
     if (m.t === 'summary') {
       if (m.digest !== rec.digest.toString('hex')) {
-        peer.conn.write(encodeFrame({ t: 'have', topic: rec.topic, ids: [...rec.events.keys()] }))
+        const ids = [...rec.events.keys()]
+        const size = this.havePartIds || HAVE_PART_IDS
+        const parts = Math.max(1, Math.ceil(ids.length / size))
+        for (let part = 0; part < parts; part++) {
+          peer.conn.write(encodeFrame({ t: 'have', topic: rec.topic, part, parts, ids: ids.slice(part * size, (part + 1) * size) }))
+        }
       }
       return
     }
 
     if (m.t === 'have') {
-      if (!Array.isArray(m.ids)) return this._strike(peer)
-      const theirs = new Set(m.ids)
+      const parts = m.parts === undefined ? 1 : m.parts
+      const part = m.part === undefined ? 0 : m.part
+      if (!Array.isArray(m.ids) || !Number.isInteger(parts) || !Number.isInteger(part) || parts < 1 || parts > MAX_HAVE_PARTS || part < 0 || part >= parts) return this._strike(peer)
+      // Collect every part of the peer's id list before working out what it lacks.
+      let pending = peer.haves.get(rec.topic)
+      if (!pending || pending.parts !== parts || part === 0) {
+        pending = { parts, seen: new Set(), ids: new Set() }
+        peer.haves.set(rec.topic, pending)
+      }
+      pending.seen.add(part)
+      for (const id of m.ids) if (typeof id === 'string') pending.ids.add(id)
+      if (pending.seen.size < parts) return
+      peer.haves.delete(rec.topic)
+      const theirs = pending.ids
       const missing = [...rec.events.values()].filter((e) => !theirs.has(e.id)).sort(compareEvents)
       let batch = []
       let bytes = 0

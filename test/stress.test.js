@@ -36,6 +36,30 @@ test('a late joiner pulls a 3,000 event history and ends byte-identical', async 
   assert.equal(bob.view(swarm.topic).messages.length, 2700)
 })
 
+test('sync works when the id list has to be sent in many parts', async (t) => {
+  const net = await testnet(t)
+  const alice = await net.node('alice')
+  const bob = await net.node('bob')
+  alice.havePartIds = 400 // force a multi-part exchange without needing a huge log
+  bob.havePartIds = 400
+  const swarm = alice.createSwarm('parts')
+  for (let i = 0; i < 2500; i++) alice.publish(swarm.topic, 'msg', { text: `a${i}` })
+  // bob has its own history that alice lacks, so both directions are exercised
+  bob.joinSwarm(swarm.link)
+  for (let i = 0; i < 1300; i++) bob.publish(swarm.topic, 'msg', { text: `b${i}` })
+  await until(() => alice.swarms.get(swarm.topic).events.size === 3802 && bob.swarms.get(swarm.topic).events.size === 3802, { label: 'two-way multi-part sync', timeout: 30000 })
+  assert.equal(digest(alice, swarm.topic), digest(bob, swarm.topic))
+
+  // malformed part numbers are a protocol violation, not a crash
+  const conn = bob.peers.get(alice.id).conn
+  for (const bad of [{ part: 5, parts: 2 }, { part: -1, parts: 2 }, { part: 0, parts: 0 }, { part: 0.5, parts: 2 }, { part: 0, parts: 1e9 }]) {
+    conn.write(encodeFrame({ t: 'have', topic: swarm.topic, ids: [], ...bad }))
+  }
+  const ok = alice.publish(swarm.topic, 'msg', { text: 'still fine' })
+  await until(() => bob.swarms.get(swarm.topic).events.has(ok.id), { label: 'alice still serving' })
+  assert.equal(alice.peers.get(bob.id).strikes, 5)
+})
+
 test('five peers racing for one task all agree on a single winner', async (t) => {
   const net = await testnet(t)
   const nodes = await Promise.all(['a', 'b', 'c', 'd', 'e'].map((n) => net.node(n)))

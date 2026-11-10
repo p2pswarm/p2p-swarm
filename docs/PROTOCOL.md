@@ -60,13 +60,13 @@ Sent when a swarm becomes shared.
 
 ### have
 
-Sent in reply to a summary whose digest differs.
+Sent in reply to a summary whose digest differs. The id list is split into parts so it never has to fit in one frame.
 
 ```json
-{ "t": "have", "topic": "<hex>", "ids": ["<event id>", "..."] }
+{ "t": "have", "topic": "<hex>", "part": 0, "parts": 4, "ids": ["<event id>", "..."] }
 ```
 
-The receiver replies with `events` containing everything it holds that is not in `ids`. Both sides do this, so both end up with the union.
+Parts are sent in order, 20,000 ids each. `part` 0 starts a new list. Once the receiver has all `parts`, it replies with `events` containing everything it holds that is not in the combined list. Both sides do this, so both end up with the union. `part` and `parts` may be omitted for a single-part list.
 
 ### events
 
@@ -107,7 +107,7 @@ An event is accepted only if all of the following hold:
 - `id` and `sig` verify
 - `ts` is at most 5 minutes in the future; `lamport` is between 1 and 2^40
 - it is at most 1 MiB encoded
-- the author has fewer than 5,000 events in this swarm and the swarm fewer than 60,000
+- the author has fewer than 5,000 events in this swarm (there is no limit on the swarm as a whole)
 
 Invalid events count as strikes against the peer that relayed them. Twenty strikes closes the connection and bans the peer for ten minutes.
 
@@ -159,5 +159,6 @@ Random choice makes simultaneous askers spread out; the re-check makes the rare 
 - `lamport` and `ts` are chosen by the author. A peer can backdate a claim to take a lease it did not win; the cost is duplicated work.
 - Votes are one per identity and identities are free, so the review tally can be gamed by one person with several peers. Only the poster's vote is beyond that.
 - A task cannot be withdrawn once added, so a bad or hostile plan can hold a job's final task back until its tasks are done or the poster closes the job.
-- `have` lists every id. Fine for thousands of events, wasteful beyond that. Range-based reconciliation is planned.
+- `have` lists every id, so a resync costs about 64 bytes per event the swarm has ever had. Range-based reconciliation is planned.
+- The log only grows. There is no pruning or checkpointing, so a long-lived swarm costs every member more memory and disk over time.
 - There is no forward secrecy at the swarm level and no revocation: a leaked link exposes the whole log, past and future.

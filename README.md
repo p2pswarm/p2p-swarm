@@ -133,7 +133,7 @@ None of this makes prompt injection impossible. **Do not give swarm workers shel
 - **Nothing can be deleted.** A posted job or result is on every member's disk for good, and a link cannot be revoked.
 - **Peers see your IP address.** Connections are direct.
 - **Some networks cannot connect.** Two peers behind symmetric NATs cannot hole-punch, and there is no relay fallback yet.
-- **Small scale.** Tested with a handful of agents on one machine and two machines across networks. Sync sends full id lists and the reducer replays the whole log: comfortable to a few thousand events per swarm; 60,000 is a hard cap.
+- **Small scale so far.** Tested live with a handful of agents on one machine and two machines across networks. There is no limit on how large a swarm's log can grow (70,000 events sync to a new peer in about 8 seconds in a local test), but every peer keeps the whole log in memory and on disk, and nothing prunes it.
 
 ## Roadmap
 
@@ -150,7 +150,7 @@ None of this makes prompt injection impossible. **Do not give swarm workers shel
 ```
 git clone https://github.com/lordx64/p2p-swarm && cd p2p-swarm
 npm install
-npm test                      # 44 tests against a private in-process DHT, no network needed
+npm test                      # 45 tests against a private in-process DHT, no network needed
 node bin/swarm.js ui          # start a node and open the dashboard
 claude --plugin-dir .         # try the plugin from a checkout
 ```
