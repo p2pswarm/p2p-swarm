@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // swarm: command line front end for the local daemon.
-import { api, action, dashboardUrl, openInBrowser, findDaemon } from '../src/mcp/client.js'
+import { api, action, dashboardUrl, openInBrowser, stopDaemon } from '../src/mcp/client.js'
 
 const [command = 'help', ...args] = process.argv.slice(2)
 
@@ -54,7 +54,10 @@ const commands = {
     if (!s.swarms.length) console.log('\nNo swarms yet. Try: swarm create my-swarm')
   },
   async create () { console.log((await action('create_swarm', { name: positional().join(' ') })).link) },
-  async join () { console.log(`joined ${(await action('join_swarm', { link: positional()[0] })).swarm}`) },
+  async join () {
+    const r = await action('join_swarm', { link: positional()[0] })
+    console.log(`joined ${r.swarm} (${r.synced ? `${r.peersOnline} peer${r.peersOnline === 1 ? '' : 's'} online` : 'no peers reachable yet'})`)
+  },
   async leave () { console.log(`left ${(await action('leave_swarm', { swarm: positional()[0] })).left}`) },
   async jobs () {
     const s = await api('/api/state')
@@ -76,16 +79,13 @@ const commands = {
   async say () { await action('message', { swarm: flag('swarm')[0], text: positional().join(' ') }) },
   async nick () { console.log((await action('set_nick', { nick: positional().join(' ') })).nick) },
   async stop () {
-    if (!(await findDaemon())) return console.log('daemon is not running')
-    await api('/api/shutdown', {})
-    console.log('daemon stopped')
+    console.log((await stopDaemon()) ? 'daemon stopped' : 'daemon is not running')
   },
-  daemon: () => import('../src/daemon/main.js').then(async ({ startDaemon }) => {
-    const d = await startDaemon()
-    console.log(`p2p-swarm node ${d.node.id.slice(0, 10)} on 127.0.0.1:${d.info.port}\n${d.url}`)
-    for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => d.shutdown().then(() => process.exit(0)))
+  daemon: () => import('../src/daemon/main.js').then(async ({ runForeground }) => {
+    const d = await runForeground()
+    if (d) console.log(d.url)
   }),
-  mcp: () => import('../src/mcp/server.js')
+  mcp: () => import('../src/mcp/server.js').then((m) => m.startStdio())
 }
 
 const run = commands[command]

@@ -5,6 +5,7 @@ import { DEFAULT_LEASE_MS, MAX_LEASE_MS } from '../core/events.js'
 import { shortId } from '../core/identity.js'
 
 const PREVIEW_CHARS = 1500
+const JOIN_SYNC_WAIT_MS = 12000
 
 // ---- reference resolution ------------------------------------------------
 // People and models pass short prefixes ("3fa9c1d2e0:1"), not 64-char hashes.
@@ -53,6 +54,21 @@ export function resolveTask (node, ref, swarmRef) {
   }
   if (hits.length === 1) return hits[0]
   throw new Error(hits.length ? `"${ref}" matches several tasks` : `no task matches "${ref}"`)
+}
+
+// A submission id is enough to identify its task, so reviewers can pass either.
+function resolveSubmission (node, ref, swarmRef) {
+  const text = String(ref || '').trim().toLowerCase()
+  if (text.length < 6) throw new Error('give a task reference, or a submission reference of at least 6 characters')
+  const hits = []
+  for (const rec of scope(node, swarmRef)) {
+    const view = node.view(rec.topic)
+    for (const task of view.tasks.values()) {
+      if (task.submissions.some((s) => s.id.startsWith(text))) hits.push({ rec, task, job: view.jobs.get(task.job) })
+    }
+  }
+  if (hits.length === 1) return hits[0]
+  throw new Error(hits.length ? `"${ref}" matches several submissions` : `no submission matches "${ref}"`)
 }
 
 function taskRef (id) {
@@ -212,9 +228,29 @@ export const actions = {
     return { swarm: rec.name, id: rec.topic, link: rec.link }
   },
 
-  join_swarm (node, p) {
+  // Joining is instant, but finding peers on the DHT and pulling history takes
+  // a few seconds. Wait for that, so the caller's next look at the job board
+  // does not see an empty swarm and conclude there is no work.
+  async join_swarm (node, p) {
     const rec = node.joinSwarm(text(p.link, 'link'))
-    return { swarm: rec.name, id: rec.topic, link: rec.link }
+    const deadline = Date.now() + (p.wait_ms === undefined ? JOIN_SYNC_WAIT_MS : Math.min(Number(p.wait_ms) || 0, 30000))
+    let settled = 0
+    while (Date.now() < deadline && node.swarms.has(rec.topic) && !node.stopped) {
+      if (node.onlinePeers(rec.topic).length) {
+        // connected: give the initial exchange a moment to finish arriving
+        if (++settled >= 4) break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+    const online = node.onlinePeers(rec.topic).length
+    return {
+      swarm: rec.name,
+      id: rec.topic,
+      link: rec.link,
+      peersOnline: online,
+      synced: online > 0,
+      ...(online ? {} : { note: 'No other peer is reachable yet, so the job board may be incomplete. The node keeps looking in the background; check again shortly.' })
+    }
   },
 
   async leave_swarm (node, p) {
@@ -277,12 +313,12 @@ export const actions = {
   submit (node, p) {
     const { rec, task } = resolveTask(node, p.task, p.swarm)
     if (task.status === 'done') throw new Error('that task is already done')
-    const e = node.publish(rec.topic, 'task.submit', { task: task.id, summary: text(p.summary, 'summary'), content: p.content || '' })
+    const e = node.publish(rec.topic, 'task.submit', { task: task.id, summary: text(p.summary, 'summary'), content: text(p.result ?? p.content, 'result') })
     return { task: taskRef(task.id), submission: shortId(e.id) }
   },
 
   review (node, p) {
-    const { rec, task, job } = resolveTask(node, p.task, p.swarm)
+    const { rec, task, job } = p.task ? resolveTask(node, p.task, p.swarm) : resolveSubmission(node, p.submission, p.swarm)
     if (job.author !== node.id) throw new Error('only the peer who posted a job can review its submissions')
     const pending = task.submissions.filter((s) => !s.verdict)
     const wanted = p.submission ? String(p.submission).toLowerCase() : null

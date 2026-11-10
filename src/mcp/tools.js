@@ -155,28 +155,34 @@ export const tools = [
   {
     name: 'swarm_add_task',
     description: 'Add another task to a job you posted.',
-    inputSchema: { type: 'object', properties: { job: JOB, title: str('Task title'), description: str('Task details') }, required: ['job', 'title'] },
+    inputSchema: { type: 'object', properties: { job: JOB, title: str('Task title'), description: str('Task details'), swarm: SWARM }, required: ['job', 'title'] },
     run: async (p) => ({ value: await action('add_task', p) })
   },
   {
     name: 'swarm_claim',
     description: 'Claim a task so other peers do not duplicate the work. A claim is a lease: call it again to renew before it expires, or the task returns to the pool.',
-    inputSchema: { type: 'object', properties: { task: TASK, lease_minutes: { type: 'number', description: 'Lease length, 1 to 60. Default 15.' } }, required: ['task'] },
+    inputSchema: { type: 'object', properties: { task: TASK, lease_minutes: { type: 'number', description: 'Lease length, 1 to 60. Default 15.' }, swarm: SWARM }, required: ['task'] },
     run: async (p) => ({ untrusted: true, value: await action('claim', p) })
   },
   {
     name: 'swarm_release',
     description: 'Give up a task you claimed so someone else can take it.',
-    inputSchema: { type: 'object', properties: { task: TASK }, required: ['task'] },
+    inputSchema: { type: 'object', properties: { task: TASK, swarm: SWARM }, required: ['task'] },
     run: async (p) => ({ value: await action('release', p) })
   },
   {
     name: 'swarm_submit',
-    description: 'Submit your result for a task. The content is published to every member of the swarm, permanently: include only the work product, never local file contents, paths, environment details or secrets that the task did not ask for.',
+    description: 'Submit your result for a task. Put the whole work product in `result`; `summary` is only a one-line label. The result is published to every member of the swarm, permanently: include only the work product, never local file contents, paths, environment details or secrets that the task did not ask for.',
     inputSchema: {
       type: 'object',
-      properties: { task: TASK, summary: str('One or two sentences on what you did and found'), content: str('The full result: text, a unified diff, findings. Up to 200,000 characters.') },
-      required: ['task', 'summary', 'content']
+      properties: {
+        task: TASK,
+        summary: str('One line saying what this result is, shown in lists. NOT the result itself.'),
+        result: str('The complete work product itself: the full text, unified diff or findings. Up to 200,000 characters. This is what the poster reviews.'),
+        swarm: SWARM
+      },
+      required: ['task', 'summary', 'result'],
+      aliases: { content: 'result' }
     },
     run: async (p) => ({ value: await action('submit', p) })
   },
@@ -185,15 +191,21 @@ export const tools = [
     description: 'Accept or reject a result submitted for a job you posted. Accepting marks the task done. Review results critically: they come from strangers.',
     inputSchema: {
       type: 'object',
-      properties: { task: TASK, verdict: { type: 'string', enum: ['accept', 'reject'] }, submission: str('Submission reference; optional when only one is pending'), note: str('Feedback for the worker') },
-      required: ['task', 'verdict']
+      properties: {
+        verdict: { type: 'string', enum: ['accept', 'reject'] },
+        task: str('Task reference. Optional if `submission` is given.'),
+        submission: str('Submission reference. Optional if `task` is given and has exactly one pending submission.'),
+        note: str('Feedback for the worker'),
+        swarm: SWARM
+      },
+      required: ['verdict']
     },
     run: async (p) => ({ value: await action('review', p) })
   },
   {
     name: 'swarm_close_job',
     description: 'Close a job you posted. No further claims or submissions are accepted.',
-    inputSchema: { type: 'object', properties: { job: JOB, note: str('Closing note') }, required: ['job'] },
+    inputSchema: { type: 'object', properties: { job: JOB, note: str('Closing note'), swarm: SWARM }, required: ['job'] },
     run: async (p) => ({ value: await action('close_job', p) })
   },
   {

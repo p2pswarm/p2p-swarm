@@ -39,9 +39,20 @@ export class Store {
     const file = path.join(this.home, 'identity.json')
     const saved = readJson(file, null)
     if (saved?.seed) return identityFromSeed(Buffer.from(saved.seed, 'hex'))
+    // Create-if-absent must be atomic: two processes starting together must
+    // end up with the same identity, never one each.
     const seed = createSeed()
-    writeJsonAtomic(file, { seed: seed.toString('hex'), created: new Date().toISOString() })
-    return identityFromSeed(seed)
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ seed: seed.toString('hex'), created: new Date().toISOString() }, null, 2), { mode: 0o600 })
+    try {
+      fs.linkSync(tmp, file)
+      return identityFromSeed(seed)
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+      return identityFromSeed(Buffer.from(readJson(file, null).seed, 'hex'))
+    } finally {
+      fs.rmSync(tmp, { force: true })
+    }
   }
 
   saveConfig () {

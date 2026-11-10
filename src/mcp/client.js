@@ -70,15 +70,25 @@ export function ensureDaemon () {
     if (info) return info
     await ensureDependencies()
     fs.mkdirSync(homeDir(), { recursive: true, mode: 0o700 })
-    const log = fs.openSync(path.join(homeDir(), 'daemon.log'), 'a', 0o600)
-    spawn(process.execPath, [path.join(ROOT, 'src', 'daemon', 'main.js')], {
-      detached: true,
-      stdio: ['ignore', log, log],
-      env: process.env
-    }).unref()
-    fs.closeSync(log)
-    const deadline = Date.now() + 20000
+    const launch = () => {
+      const log = fs.openSync(path.join(homeDir(), 'daemon.log'), 'a', 0o600)
+      spawn(process.execPath, [path.join(ROOT, 'src', 'daemon', 'main.js')], {
+        detached: true,
+        stdio: ['ignore', log, log],
+        env: process.env
+      }).unref()
+      fs.closeSync(log)
+    }
+    // A launch can lose to a daemon that is still shutting down (it holds the
+    // lock for a moment after it stops answering), so keep trying. Extra
+    // launches are harmless: the lock lets exactly one through.
+    const deadline = Date.now() + 30000
+    let nextLaunch = 0
     while (Date.now() < deadline) {
+      if (Date.now() >= nextLaunch) {
+        launch()
+        nextLaunch = Date.now() + 2500
+      }
       await new Promise((resolve) => setTimeout(resolve, 250))
       info = await findDaemon()
       if (info) return info
@@ -93,7 +103,19 @@ export async function api (route, body, timeoutMs) {
 }
 
 export async function action (name, params) {
-  return (await api('/api/action', { action: name, params })).result
+  return (await api('/api/action', { action: name, params }, 45000)).result
+}
+
+// Asks the daemon to stop and waits until it has really exited and released
+// its lock, so that a start issued right afterwards succeeds.
+export async function stopDaemon () {
+  const info = await findDaemon()
+  if (!info) return false
+  await call(info, '/api/shutdown', {})
+  const lock = path.join(homeDir(), 'daemon.lock')
+  const deadline = Date.now() + 10000
+  while (fs.existsSync(lock) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+  return true
 }
 
 export async function dashboardUrl () {

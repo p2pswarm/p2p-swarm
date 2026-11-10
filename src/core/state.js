@@ -119,6 +119,10 @@ export function reduce (events, { now = Date.now(), blocked = new Set() } = {}) 
           t.done = true
           t.accepted = s.id
           t.holder = null
+        } else if (t.holder && t.holder.peer === s.author) {
+          // A rejected worker loses the lease, so the task is immediately
+          // available to everyone (including them) instead of sitting locked.
+          t.holder = null
         }
         break
       }

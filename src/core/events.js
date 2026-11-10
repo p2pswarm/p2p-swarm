@@ -7,7 +7,9 @@ import crypto from 'node:crypto'
 import { verifySignature } from './identity.js'
 
 export const PROTOCOL_VERSION = 1
-export const MAX_EVENT_BYTES = 256 * 1024
+// Sized so that a maximum-length result (200,000 characters) fits even when
+// every character is multi-byte: limits are promised in characters, enforced in bytes.
+export const MAX_EVENT_BYTES = 1024 * 1024
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
 export const MAX_LEASE_MS = 60 * 60 * 1000
 export const DEFAULT_LEASE_MS = 15 * 60 * 1000
@@ -54,7 +56,7 @@ const VALIDATORS = {
     Number.isInteger(b.leaseMs) && b.leaseMs >= 10000 && b.leaseMs <= MAX_LEASE_MS,
   'task.release': (b) => onlyKeys(b, ['task']) && TASK_REF.test(b.task),
   'task.submit': (b) => onlyKeys(b, ['task', 'summary', 'content']) && TASK_REF.test(b.task) &&
-    str(b.summary, 2000) && str(b.content, 200000, { min: 0 }),
+    str(b.summary, 2000) && str(b.content, 200000),
   'task.review': (b) => onlyKeys(b, ['task', 'submission', 'verdict', 'note']) && TASK_REF.test(b.task) &&
     HEX64.test(b.submission) && (b.verdict === 'accept' || b.verdict === 'reject') && optStr(b.note, 4000),
   'job.close': (b) => onlyKeys(b, ['job', 'note']) && HEX64.test(b.job) && optStr(b.note, 4000),
@@ -89,7 +91,7 @@ export function createEvent (identity, { swarm, lamport, type, body, ts = Date.n
   const core = { v: PROTOCOL_VERSION, swarm, author: identity.id, lamport, ts, type, body }
   const id = eventId(core)
   const event = { ...core, id: id.toString('hex'), sig: identity.sign(id).toString('hex') }
-  if (Buffer.byteLength(JSON.stringify(event)) > MAX_EVENT_BYTES) throw new Error('event too large')
+  if (Buffer.byteLength(JSON.stringify(event)) > MAX_EVENT_BYTES) throw new Error('too large to publish: the encoded event exceeds 1 MiB')
   return event
 }
 

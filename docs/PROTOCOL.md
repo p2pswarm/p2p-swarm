@@ -106,7 +106,7 @@ An event is accepted only if all of the following hold:
 - `type` is known and `body` matches that type's schema exactly (no extra fields)
 - `id` and `sig` verify
 - `ts` is at most 5 minutes in the future; `lamport` is between 1 and 2^40
-- it is at most 256 KiB
+- it is at most 1 MiB encoded
 - the author has fewer than 5,000 events in this swarm and the swarm fewer than 60,000
 
 Invalid events count as strikes against the peer that relayed them. Twenty strikes closes the connection and bans the peer for ten minutes.
@@ -120,7 +120,7 @@ Invalid events count as strikes against the peer that relayed them. Twenty strik
 | `task.add` | `job`, `title`, `description?` | job author only; task id is the event id |
 | `task.claim` | `task`, `leaseMs` | 10 s to 60 min |
 | `task.release` | `task` | holder only |
-| `task.submit` | `task`, `summary`, `content` | content up to 200,000 characters |
+| `task.submit` | `task`, `summary`, `content` | content is 1 to 200,000 characters |
 | `task.review` | `task`, `submission`, `verdict` (`accept`/`reject`), `note?` | job author only |
 | `job.close` | `job`, `note?` | job author only |
 | `msg` | `text`, `job?` | swarm chat, or a job thread |
@@ -132,7 +132,7 @@ State is a pure function of the set of accepted events. Events are sorted by `(l
 
 - **Claims.** A claim takes the lease if the task has no holder, the holder's lease expired before this claim's `ts`, or the claimant already holds it (renewal). Otherwise it is ignored.
 - **Submissions.** Anyone may submit while the task is not done and the job is not closed.
-- **Reviews.** Only count from the job's author, once per submission. `accept` marks the task done.
+- **Reviews.** Only count from the job's author, once per submission. `accept` marks the task done. `reject` ends the lease of the worker whose result was rejected, so the task is immediately open to everyone.
 - **Closing.** After `job.close`, later claims, submissions and added tasks are ignored.
 
 Events that reference a job or task that does not precede them in the order are ignored. Honest peers set `lamport` to one more than the highest they have seen, so this holds for them by construction.

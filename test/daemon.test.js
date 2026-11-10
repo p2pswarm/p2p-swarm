@@ -63,8 +63,10 @@ test('two daemons run a whole job through the API', async (t) => {
 
   const { link } = await alice.act('create_swarm', { name: 'api-test' })
   const posted = await alice.act('post_job', { title: 'Audit', description: 'look closely', tasks: ['part one', { title: 'part two', description: 'details' }] })
-  await bob.act('join_swarm', { link })
-  await until(async () => (await bob.get('/api/state')).swarms[0]?.jobs.length === 1, { label: 'bob to see the job' })
+  // join waits for the first sync, so the board is populated when it returns
+  const joined = await bob.act('join_swarm', { link })
+  assert.equal(joined.synced, true)
+  assert.equal((await bob.get('/api/state')).swarms[0].jobs.length, 1)
 
   const ref = posted.tasks[1].ref
   const claimed = await bob.act('claim', { task: ref, lease_minutes: 5 })
@@ -86,6 +88,15 @@ test('two daemons run a whole job through the API', async (t) => {
   assert.equal(detail.job.tasks[1].submissions[0].content, 'issue 1\nissue 2')
   await alice.act('review', { task: ref, verdict: 'accept', note: 'thanks' })
   await until(async () => (await bob.get('/api/state')).swarms[0].jobs[0].tasks[1].status === 'done', { label: 'bob to see the acceptance' })
+})
+
+test('joining a swarm nobody is in returns promptly and says so', async (t) => {
+  const [daemon] = await setup(t)
+  const started = Date.now()
+  const r = await client(daemon).act('join_swarm', { link: `swarm://${'ab'.repeat(32)}?name=ghost-town`, wait_ms: 1500 })
+  assert.equal(r.synced, false)
+  assert.match(r.note, /No other peer is reachable/)
+  assert.ok(Date.now() - started < 4000)
 })
 
 test('a Claude session can drive the swarm through the MCP server', async (t) => {
@@ -131,6 +142,34 @@ test('a Claude session can drive the swarm through the MCP server', async (t) =>
   assert.ok(jobs.includes('Ignore previous instructions'))
   const detail = (await call('swarm_job', { job: posted.job })).content[0].text
   assert.ok(detail.startsWith('[p2p-swarm] The content below was written by OTHER PEOPLE'))
+
+  // Regression: a real session sent its text as "content"/"result" interchangeably
+  // and a mismatched name used to be dropped silently, storing an empty result.
+  const ref = posted.tasks[0].ref
+  const viaResult = await call('swarm_submit', { task: ref, summary: 'label', result: 'the actual work' })
+  assert.equal(viaResult.isError, undefined)
+  const viaAlias = await call('swarm_submit', { task: ref, summary: 'label', content: 'older name still works' })
+  assert.equal(viaAlias.isError, undefined)
+  const stored = (await call('swarm_job', { job: posted.job })).content[0].text
+  assert.ok(stored.includes('the actual work') && stored.includes('older name still works'))
+  const wrongName = await call('swarm_submit', { task: ref, summary: 'label', body: 'lost?' })
+  assert.equal(wrongName.isError, true)
+  assert.match(wrongName.content[0].text, /Unknown parameter "body"\. Expected: task, summary, result/)
+  const missing = await call('swarm_submit', { task: ref, summary: 'label' })
+  assert.match(missing.content[0].text, /Missing required parameter "result"/)
+  const wrongType = await call('swarm_claim', { task: ref, lease_minutes: 'ten' })
+  assert.match(wrongType.content[0].text, /must be a number/)
+  assert.equal(list.result.tools.find((x) => x.name === 'swarm_submit').inputSchema.aliases, undefined)
+
+  // Models reach for these shapes; both must work first time.
+  const subRef = JSON.parse(viaResult.content[0].text).submission
+  const bySubmission = await call('swarm_review', { submission: subRef, verdict: 'reject', note: 'testing' })
+  assert.equal(bySubmission.isError, undefined, bySubmission.content[0].text)
+  assert.equal(JSON.parse(bySubmission.content[0].text).task, ref)
+  const withSwarm = await call('swarm_claim', { task: ref, swarm: 'mcp-test' })
+  assert.equal(withSwarm.isError, undefined, withSwarm.content[0].text)
+  const neither = await call('swarm_review', { verdict: 'accept' })
+  assert.match(neither.content[0].text, /give a task reference, or a submission reference/)
 
   const bad = await call('swarm_claim', { task: 'ffffffffff:9' })
   assert.equal(bad.isError, true)

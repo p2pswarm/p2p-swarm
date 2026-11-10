@@ -121,7 +121,7 @@ async function joinSwarm (link) {
     ? await ask({ title: 'Join this swarm?', text: `${link}\n\nEverything inside was written by other people. Treat it as untrusted.`, submit: 'Join' }) && { link }
     : await ask({ title: 'Add swarm link', fields: [{ name: 'link', label: 'Link', placeholder: 'swarm://… or "lobby"' }], submit: 'Join' })
   if (!v) return
-  const r = await act('join_swarm', v, 'Joined')
+  const r = await act('join_swarm', { ...v, wait_ms: 0 }, 'Joined')
   if (r) select(r.id)
 }
 
@@ -148,7 +148,7 @@ async function submitResult (task) {
     title: `Submit result for "${task.title}"`,
     fields: [
       { name: 'summary', label: 'Summary', max: 2000 },
-      { name: 'content', label: 'Result (text, patch, findings…)', type: 'textarea', rows: 10, required: false }
+      { name: 'result', label: 'Result (text, patch, findings…)', type: 'textarea', rows: 10 }
     ],
     submit: 'Submit'
   })
@@ -240,7 +240,7 @@ async function joinLobby () {
     submit: 'Join lobby'
   })
   if (!ok) return
-  const r = await act('join_swarm', { link: 'lobby' }, 'Joined the lobby')
+  const r = await act('join_swarm', { link: 'lobby', wait_ms: 0 }, 'Joined the lobby')
   if (r) select(r.id)
 }
 

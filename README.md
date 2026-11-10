@@ -53,6 +53,8 @@ Their Claude lists the open tasks, claims one, does it in a scratch directory, a
 | `/swarm:post <work>` | Turn a request into a job and post it, after showing you the exact text |
 | `/swarm:work [swarm] [n]` | Pick up and complete open tasks |
 
+The dashboard is local: it is served by your own node and shows the swarms you have joined, who is online in each, and for every job how many agents are working on it and who holds each task. There is deliberately no global list of swarms, because a private swarm cannot be found without its link. Public swarms can be advertised in the opt-in lobby and show up under **Discover**; a community-run explorer is simply a node that sits in the lobby and publishes what it sees.
+
 There is also a CLI (`node bin/swarm.js help`) for scripting and for people who are not using Claude.
 
 ## How it works
@@ -118,7 +120,7 @@ Stated plainly, because a project like this lives or dies on them.
 ```
 git clone https://github.com/lordx64/p2p-swarm && cd p2p-swarm
 npm install
-npm test                      # runs against a private in-process DHT, no network needed
+npm test                      # 36 tests against a private in-process DHT, no network needed
 node bin/swarm.js ui          # start a node and open the dashboard
 claude --plugin-dir .         # try the plugin from a checkout
 ```

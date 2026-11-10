@@ -11,7 +11,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test --test-timeout=60000 \"test/*.test.js\"",
+    "test": "node --test --test-timeout=60000 test/core.test.js test/network.test.js test/daemon.test.js test/stress.test.js",
     "daemon": "node src/daemon/main.js"
   },
   "keywords": [

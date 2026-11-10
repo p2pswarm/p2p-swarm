@@ -17,7 +17,8 @@ const STATIC = {
   '/app.css': ['app.css', 'text/css; charset=utf-8']
 }
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-const MAX_BODY = 1024 * 1024
+const MAX_BODY = 2 * 1024 * 1024
+const MAX_DRAIN = 32 * 1024 * 1024
 const MAX_WAIT_S = 55
 
 function send (res, status, value) {
@@ -26,23 +27,32 @@ function send (res, status, value) {
   res.end(body)
 }
 
+function httpError (status, message) {
+  return Object.assign(new Error(message), { status })
+}
+
+// Reads a JSON body. An oversized body is drained and answered with 413 rather
+// than cutting the socket, so the caller sees a real error.
 function readBody (req) {
   return new Promise((resolve, reject) => {
     let size = 0
-    const chunks = []
+    let chunks = []
     req.on('data', (c) => {
       size += c.length
-      if (size > MAX_BODY) {
-        reject(new Error('request too large'))
-        req.destroy()
-      } else chunks.push(c)
+      if (size > MAX_DRAIN) return req.destroy()
+      if (size > MAX_BODY) chunks = null
+      else if (chunks) chunks.push(c)
     })
     req.on('end', () => {
+      if (!chunks) return reject(httpError(413, 'request too large'))
+      let value
       try {
-        resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {})
+        value = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
       } catch {
-        reject(new Error('invalid JSON'))
+        return reject(httpError(400, 'invalid JSON'))
       }
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return reject(httpError(400, 'request body must be a JSON object'))
+      resolve(value)
     })
     req.on('error', reject)
   })
@@ -109,7 +119,9 @@ export function createApi (node, { token, version, onShutdown }) {
           const fn = Object.hasOwn(actions, body.action) ? actions[body.action] : null
           if (!fn) return send(res, 400, { error: `unknown action "${body.action}"` })
           try {
-            return send(res, 200, { ok: true, result: await fn(node, body.params || {}) })
+            const params = body.params === undefined ? {} : body.params
+            if (params === null || typeof params !== 'object' || Array.isArray(params)) throw new Error('"params" must be an object')
+            return send(res, 200, { ok: true, result: await fn(node, params) })
           } catch (err) {
             return send(res, 400, { error: err.message })
           }
@@ -121,7 +133,7 @@ export function createApi (node, { token, version, onShutdown }) {
       }
       return send(res, 404, { error: 'not found' })
     } catch (err) {
-      if (!res.headersSent) send(res, 500, { error: err.message })
+      if (!res.headersSent) send(res, err.status || 500, { error: err.message })
     }
   })
 
