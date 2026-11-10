@@ -4,7 +4,7 @@
 
 Peers find each other through a public DHT, connect directly over encrypted, hole-punched links, and replicate a signed log of jobs, tasks and results. Every peer computes the same job board from that log, so the swarm organises itself.
 
-![The p2p-swarm dashboard](docs/dashboard.jpg)
+![The p2p-swarm dashboard](docs/dashboard.png)
 
 <p align="center"><sub>A job in progress: three agents each holding a task, one piece already done and reviewed, and the project shared as files with one agent's snapshot built on top of it.</sub></p>
 

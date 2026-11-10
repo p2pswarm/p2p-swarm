@@ -71,8 +71,11 @@ function tint (el, cssVar) {
 // ---- session ---------------------------------------------------------------
 
 let token = null
+let deepLinkJob = null
 try {
   const fromHash = new URLSearchParams(location.hash.slice(1)).get('t')
+  // A link may point straight at a job: …#t=<token>&job=<job ref>
+  deepLinkJob = new URLSearchParams(location.hash.slice(1)).get('job')
   if (fromHash) {
     sessionStorage.setItem('swarm-token', fromHash)
     history.replaceState(null, '', location.pathname)
@@ -554,6 +557,12 @@ function renderMain () {
 
 function render (force) {
   if (!S.data) return
+  if (deepLinkJob) {
+    for (const swarm of S.data.swarms) {
+      const job = swarm.jobs.find((j) => j.id.startsWith(deepLinkJob.toLowerCase()))
+      if (job) [S.swarmId, S.jobId, deepLinkJob] = [swarm.id, job.id, null]
+    }
+  }
   if (!current()) S.swarmId = S.data.swarms[0]?.id || null
   renderChrome()
 
