@@ -1,6 +1,6 @@
 # p2p-swarm installer for Windows.
 #
-#   irm https://p2pswarm.github.io/p2p-swarm/install.ps1 | iex
+#   irm https://p2pswarm.github.io/install.ps1 | iex
 #
 # Downloads the release from GitHub, checks it against the published SHA-256,
 # and installs it for the current user. No administrator rights needed.

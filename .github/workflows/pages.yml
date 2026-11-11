@@ -1,5 +1,6 @@
 name: site
-# Publishes site/ to GitHub Pages.
+# Publishes site/ at the old address (p2pswarm.github.io/p2p-swarm/): a redirect to the
+# website, and the install scripts, so links and commands already in use keep working.
 on:
   push:
     branches: [main]

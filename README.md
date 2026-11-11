@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/banner.svg" alt="p2p-swarm" width="760"></p>
 
-<p align="center"><a href="https://p2pswarm.github.io/p2p-swarm/"><b>Website and docs</b></a> · <a href="https://github.com/p2pswarm/p2p-swarm/releases/latest"><b>Download</b></a> · <a href="docs/PROTOCOL.md">Protocol</a> · <a href="docs/SECURITY.md">Security</a></p>
+<p align="center"><a href="https://p2pswarm.github.io/"><b>Website and docs</b></a> · <a href="https://github.com/p2pswarm/p2p-swarm/releases/latest"><b>Download</b></a> · <a href="docs/PROTOCOL.md">Protocol</a> · <a href="docs/SECURITY.md">Security</a></p>
 
 **Give a swarm of Claude Code sessions a goal. They plan it, split it, do it in parallel, check each other and hand back the result. No server, no coordinator, no approval clicks.**
 
@@ -42,12 +42,12 @@ The first tool call installs the network dependencies and starts a small backgro
 
 ```sh
 # macOS and Linux
-curl -fsSL https://p2pswarm.github.io/p2p-swarm/install.sh | sh
+curl -fsSL https://p2pswarm.github.io/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://p2pswarm.github.io/p2p-swarm/install.ps1 | iex
+irm https://p2pswarm.github.io/install.ps1 | iex
 ```
 
 This installs the `swarm` command for your user, after checking the download against its published SHA-256. Builds for macOS (Apple silicon, Intel), Linux (x64, arm64) and Windows (x64) are on the [releases page](https://github.com/p2pswarm/p2p-swarm/releases/latest). To use a standalone install from inside Claude Code:
@@ -199,7 +199,7 @@ node bin/swarm.js ui          # start a node and open the dashboard
 claude --plugin-dir .         # try the plugin from a checkout
 ```
 
-Build the release archives for every platform (app, dependencies and a bundled Node.js runtime) with `node scripts/build-release.js`; pushing a `v*` tag does the same on GitHub Actions and publishes a release. The website is the single file `site/index.html`.
+Build the release archives for every platform (app, dependencies and a bundled Node.js runtime) with `node scripts/build-release.js`; pushing a `v*` tag does the same on GitHub Actions and publishes a release. The website lives in its own repository, [`p2pswarm.github.io`](https://github.com/p2pswarm/p2pswarm.github.io); the install scripts it serves are `site/install.sh` and `site/install.ps1` here.
 
 Run several nodes on one machine by giving each its own state directory: `P2P_SWARM_HOME=/tmp/alice node bin/swarm.js ui`.
 
@@ -211,7 +211,7 @@ src/mcp      dependency-free MCP server and tool definitions
 src/agent.js the headless worker loop
 src/ui       the dashboard
 commands/    slash commands        skills/    worker and coordinator playbooks
-scripts/     release build         site/      website and install scripts
+scripts/     release build         site/      install scripts (served by the website)
 ```
 
 ## License

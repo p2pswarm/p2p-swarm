@@ -1,7 +1,7 @@
 #!/bin/sh
 # p2p-swarm installer for macOS and Linux.
 #
-#   curl -fsSL https://p2pswarm.github.io/p2p-swarm/install.sh | sh
+#   curl -fsSL https://p2pswarm.github.io/install.sh | sh
 #
 # Downloads the release for this machine from GitHub, checks it against the
 # published SHA-256, and installs it under ~/.local. Nothing runs as root.
@@ -34,7 +34,7 @@ main() {
   case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux ;;
-    *) fail "unsupported system $(uname -s). On Windows use: irm https://p2pswarm.github.io/p2p-swarm/install.ps1 | iex" ;;
+    *) fail "unsupported system $(uname -s). On Windows use: irm https://p2pswarm.github.io/install.ps1 | iex" ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64) arch=x64 ;;
