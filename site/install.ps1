@@ -36,16 +36,24 @@ function Install-P2PSwarm {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $tmp $archive)).Hash.ToLower()
     if ($expected -ne $actual) { throw "checksum mismatch for $archive (expected $expected, got $actual)" }
 
-    Expand-Archive -LiteralPath (Join-Path $tmp $archive) -DestinationPath $tmp -Force
+    # Windows' built-in tar unpacks thousands of small files far faster than Expand-Archive.
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (Test-Path $tar) {
+      & $tar -xf (Join-Path $tmp $archive) -C $tmp
+      if ($LASTEXITCODE -ne 0) { throw "could not unpack $archive" }
+    } else {
+      Expand-Archive -LiteralPath (Join-Path $tmp $archive) -DestinationPath $tmp -Force
+    }
     $new = Join-Path $tmp 'p2p-swarm'
-    & (Join-Path $new 'swarm.cmd') help | Out-Null
+    if (-not (Test-Path (Join-Path $new 'swarm.cmd'))) { throw "$archive did not contain the expected files" }
+    $null = & (Join-Path $new 'swarm.cmd') help 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'the downloaded build does not run on this machine' }
     $version = (Get-Content (Join-Path $new 'VERSION') | Select-Object -First 1).Trim()
 
     # Replace any previous install, stopping its background node first. Swarm
     # data lives in %USERPROFILE%\.p2p-swarm and is untouched.
     if (Test-Path (Join-Path $dest 'swarm.cmd')) {
-      try { & (Join-Path $dest 'swarm.cmd') stop | Out-Null } catch { }
+      try { $null = & (Join-Path $dest 'swarm.cmd') stop 2>&1 } catch { }
       Remove-Item -LiteralPath $dest -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
@@ -75,4 +83,10 @@ function Install-P2PSwarm {
   }
 }
 
-Install-P2PSwarm
+try {
+  Install-P2PSwarm
+} catch {
+  Write-Host "install failed: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host $_.ScriptStackTrace
+  exit 1
+}

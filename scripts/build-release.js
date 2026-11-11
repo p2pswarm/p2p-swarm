@@ -29,6 +29,9 @@ const TARGETS = {
 }
 const APP_FILES = ['bin', 'src', 'commands', 'skills', '.claude-plugin', '.mcp.json', 'package.json', 'package-lock.json', 'LICENSE', 'README.md']
 
+// On Windows, always the system's bsdtar: it reads and writes zip, and unlike
+// the GNU tar that ships with Git it does not read "C:" as a remote host.
+const TAR = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar'
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'inherit'], ...opts })
 const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 
@@ -61,14 +64,11 @@ async function nodeRuntime (target, cache) {
   // Relative paths throughout: some tar builds read "C:\\..." as a remote host.
   const rel = (p) => path.relative(cache, p).split(path.sep).join('/')
   if (archiveExt === 'zip') {
-    try {
-      run('unzip', ['-q', '-o', rel(archive), `${inner}/node.exe`, '-d', rel(out)], { cwd: cache })
-    } catch {
-      run('tar', ['-xf', rel(archive), '-C', rel(out), `${inner}/node.exe`], { cwd: cache }) // bsdtar reads zip
-    }
+    if (process.platform === 'win32') run(TAR, ['-xf', rel(archive), '-C', rel(out), `${inner}/node.exe`], { cwd: cache })
+    else run('unzip', ['-q', '-o', rel(archive), `${inner}/node.exe`, '-d', rel(out)], { cwd: cache })
     return { file: path.join(out, inner, 'node.exe'), version: name.match(/node-(v[\d.]+)-/)[1] }
   }
-  run('tar', ['-xzf', rel(archive), '-C', rel(out), `${inner}/bin/node`], { cwd: cache })
+  run(TAR, ['-xzf', rel(archive), '-C', rel(out), `${inner}/bin/node`], { cwd: cache })
   return { file: path.join(out, inner, 'bin', 'node'), version: name.match(/node-(v[\d.]+)-/)[1] }
 }
 
@@ -137,12 +137,11 @@ async function build (target, cache) {
   fs.rmSync(out, { force: true })
   const outRel = path.relative(stage, out).split(path.sep).join('/')
   if (t.ext === 'zip') {
-    try {
-      run('zip', ['-q', '-r', '-X', outRel, 'p2p-swarm'], { cwd: stage })
-    } catch {
-      run('tar', ['-a', '-cf', outRel, 'p2p-swarm'], { cwd: stage }) // bsdtar writes zip by extension
-    }
-  } else run('tar', ['-czf', outRel, 'p2p-swarm'], { cwd: stage, env: { ...process.env, COPYFILE_DISABLE: '1' } })
+    if (process.platform === 'win32') run(TAR, ['-a', '-cf', outRel, 'p2p-swarm'], { cwd: stage }) // bsdtar writes zip by extension
+    else run('zip', ['-q', '-r', '-X', outRel, 'p2p-swarm'], { cwd: stage })
+    // A zip always starts with "PK": catch a mis-built archive here, not on a user's machine.
+    if (fs.readFileSync(out).subarray(0, 2).toString() !== 'PK') throw new Error(`${out} is not a zip archive`)
+  } else run(TAR, ['-czf', outRel, 'p2p-swarm'], { cwd: stage, env: { ...process.env, COPYFILE_DISABLE: '1' } })
   return { target, file: out, node: runtime.version }
 }
 
