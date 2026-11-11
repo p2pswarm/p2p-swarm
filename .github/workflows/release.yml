@@ -1,0 +1,35 @@
+name: release
+# Pushing a version tag (v0.3.0) builds every platform and publishes a release.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Tag must match package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm test
+      - name: Build all platforms
+        run: node scripts/build-release.js
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/p2p-swarm-*.tar.gz dist/p2p-swarm-*.zip dist/SHA256SUMS \
+            site/install.sh site/install.ps1 \
+            --title "p2p-swarm $GITHUB_REF_NAME" --generate-notes

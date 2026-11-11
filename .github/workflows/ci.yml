@@ -21,3 +21,55 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # Build the release package for this platform, install it with the real
+  # installer, and run it. This is what proves each platform's download works.
+  package:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: windows-latest, target: win-x64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/build-release.js ${{ matrix.target }}
+      - name: Install (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          P2P_SWARM_BASE_URL="file://$PWD/dist" P2P_SWARM_INSTALL="$RUNNER_TEMP/app" P2P_SWARM_BIN="$RUNNER_TEMP/bin" sh site/install.sh
+          echo "SWARM=$RUNNER_TEMP/bin/swarm" >> "$GITHUB_ENV"
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:P2P_SWARM_BASE_URL = "$PWD\dist"
+          $env:P2P_SWARM_INSTALL = "$env:RUNNER_TEMP\app"
+          ./site/install.ps1
+          "SWARM=$env:RUNNER_TEMP\app\swarm.cmd" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run the installed build without Node on PATH
+        run: |
+          export P2P_SWARM_HOME="$RUNNER_TEMP/swarm-home" P2P_SWARM_PORT=7790
+          "$SWARM" help | head -2
+          "$SWARM" status
+          "$SWARM" create ci-swarm
+          "$SWARM" post "hello from ${{ matrix.target }}" --desc "smoke test"
+          mkdir -p "$RUNNER_TEMP/proj/src" && echo "console.log(1)" > "$RUNNER_TEMP/proj/src/a.js" && echo "SECRET=1" > "$RUNNER_TEMP/proj/.env"
+          "$SWARM" share "$RUNNER_TEMP/proj"
+          "$SWARM" files
+          share="$("$SWARM" files | head -1 | cut -d' ' -f1)"
+          "$SWARM" fetch "$share" "$RUNNER_TEMP/fetched"
+          test -f "$RUNNER_TEMP/fetched/src/a.js"
+          test ! -e "$RUNNER_TEMP/fetched/.env"
+          "$SWARM" jobs | grep -q "hello from ${{ matrix.target }}"
+          "$SWARM" stop

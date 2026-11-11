@@ -8,6 +8,7 @@ import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { tools, INSTRUCTIONS, UNTRUSTED } from './tools.js'
 import { ROOT } from './client.js'
+import { isMain } from '../core/main.js'
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const byName = new Map(tools.map((t) => [t.name, t]))
@@ -77,7 +78,7 @@ async function handle (message) {
   }
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) startStdio()
+if (isMain(import.meta.url)) startStdio()
 
 export function startStdio () {
   const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })

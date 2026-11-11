@@ -1,5 +1,7 @@
 <p align="center"><img src="docs/banner.svg" alt="p2p-swarm" width="760"></p>
 
+<p align="center"><a href="https://lordx64.github.io/p2p-swarm/"><b>Website and docs</b></a> · <a href="https://github.com/lordx64/p2p-swarm/releases/latest"><b>Download</b></a> · <a href="docs/PROTOCOL.md">Protocol</a> · <a href="docs/SECURITY.md">Security</a></p>
+
 **Give a swarm of Claude Code sessions a goal. They plan it, split it, do it in parallel, check each other and hand back the result. No server, no coordinator, no approval clicks.**
 
 Peers find each other through a public DHT, connect directly over encrypted, hole-punched links, and replicate a signed log of jobs, tasks and results. Every peer computes the same job board from that log, so the swarm organises itself.
@@ -27,7 +29,7 @@ In a live test, a real repository was shared from disk to three unattended agent
 
 ## Install
 
-Requires Node.js 20+ and Claude Code.
+**As a Claude Code plugin** (needs Node.js 20+):
 
 ```
 /plugin marketplace add lordx64/p2p-swarm
@@ -35,6 +37,24 @@ Requires Node.js 20+ and Claude Code.
 ```
 
 The first tool call installs the network dependencies and starts a small background daemon. That takes a few seconds, once.
+
+**As a standalone command** (self-contained: no Node.js needed):
+
+```sh
+# macOS and Linux
+curl -fsSL https://lordx64.github.io/p2p-swarm/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://lordx64.github.io/p2p-swarm/install.ps1 | iex
+```
+
+This installs the `swarm` command for your user, after checking the download against its published SHA-256. Builds for macOS (Apple silicon, Intel), Linux (x64, arm64) and Windows (x64) are on the [releases page](https://github.com/lordx64/p2p-swarm/releases/latest). To use a standalone install from inside Claude Code:
+
+```
+claude mcp add --scope user swarm -- swarm mcp
+```
 
 ### Updating
 
@@ -44,7 +64,7 @@ claude plugin update swarm@p2p-swarm
 node ~/.claude/plugins/marketplaces/p2p-swarm/bin/swarm.js stop
 ```
 
-Then restart Claude Code. The last line stops the background daemon so that the new version starts in its place on next use. If you installed the plugin for one project rather than for your user, run these from that project's folder and add `--scope project` to the second line. Everyone in a swarm should be on the same version: 0.2 and later do not connect to 0.1.
+Then restart Claude Code. The last line stops the background daemon so that the new version starts in its place; from 0.3.1 on, a daemon left over from another version is replaced automatically. A standalone install is updated by running the install command again. If you installed the plugin for one project rather than for your user, run these from that project's folder and add `--scope project` to the second line. Everyone in a swarm should be on the same version: 0.2 and later do not connect to 0.1.
 
 ## Sixty seconds
 
@@ -179,6 +199,8 @@ node bin/swarm.js ui          # start a node and open the dashboard
 claude --plugin-dir .         # try the plugin from a checkout
 ```
 
+Build the release archives for every platform (app, dependencies and a bundled Node.js runtime) with `node scripts/build-release.js`; pushing a `v*` tag does the same on GitHub Actions and publishes a release. The website is the single file `site/index.html`.
+
 Run several nodes on one machine by giving each its own state directory: `P2P_SWARM_HOME=/tmp/alice node bin/swarm.js ui`.
 
 ```
@@ -189,6 +211,7 @@ src/mcp      dependency-free MCP server and tool definitions
 src/agent.js the headless worker loop
 src/ui       the dashboard
 commands/    slash commands        skills/    worker and coordinator playbooks
+scripts/     release build         site/      website and install scripts
 ```
 
 ## License

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { SwarmNode } from '../net/node.js'
 import { defaultHome } from '../core/store.js'
 import { createApi } from './api.js'
+import { isMain } from '../core/main.js'
 
 const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8'))
 export const DEFAULT_PORT = 7717
@@ -171,4 +172,4 @@ export async function runForeground (options) {
   return daemon
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) runForeground()
+if (isMain(import.meta.url)) runForeground()

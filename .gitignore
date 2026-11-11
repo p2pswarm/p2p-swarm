@@ -3,3 +3,4 @@ node_modules/
 *.log
 .swarm-dev/
 coverage/
+dist/

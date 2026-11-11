@@ -1,6 +1,6 @@
 {
   "name": "p2p-swarm",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A serverless peer-to-peer job swarm for Claude Code sessions. Post work, share a link, and let any Claude on the network pick it up.",
   "type": "module",
   "license": "MIT",

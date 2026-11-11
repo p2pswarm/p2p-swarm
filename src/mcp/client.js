@@ -33,12 +33,27 @@ async function call (info, route, body, timeoutMs = 10000) {
   return json
 }
 
-export async function findDaemon () {
+const OWN_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version
+
+async function waitForExit () {
+  const lock = path.join(homeDir(), 'daemon.lock')
+  const deadline = Date.now() + 10000
+  while (fs.existsSync(lock) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+}
+
+// The running daemon, if it is one this code can talk to. A daemon left over
+// from another version (after an upgrade) is asked to stop, so that the caller
+// starts the current one in its place: nobody should have to do that by hand.
+export async function findDaemon ({ anyVersion = false } = {}) {
   const info = readInfo()
   if (!info) return null
   try {
     const pong = await call(info, '/api/ping', null, 1500)
-    return pong.name === 'p2p-swarm' ? info : null
+    if (pong.name !== 'p2p-swarm') return null
+    if (anyVersion || pong.version === OWN_VERSION) return info
+    await call(info, '/api/shutdown', {}).catch(() => {})
+    await waitForExit()
+    return null
   } catch {
     return null
   }
@@ -74,6 +89,7 @@ export function ensureDaemon () {
       const log = fs.openSync(path.join(homeDir(), 'daemon.log'), 'a', 0o600)
       spawn(process.execPath, [path.join(ROOT, 'src', 'daemon', 'main.js')], {
         detached: true,
+        windowsHide: true,
         stdio: ['ignore', log, log],
         env: process.env
       }).unref()
@@ -109,12 +125,10 @@ export async function action (name, params) {
 // Asks the daemon to stop and waits until it has really exited and released
 // its lock, so that a start issued right afterwards succeeds.
 export async function stopDaemon () {
-  const info = await findDaemon()
+  const info = await findDaemon({ anyVersion: true })
   if (!info) return false
   await call(info, '/api/shutdown', {})
-  const lock = path.join(homeDir(), 'daemon.lock')
-  const deadline = Date.now() + 10000
-  while (fs.existsSync(lock) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+  await waitForExit()
   return true
 }
 
