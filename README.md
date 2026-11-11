@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/banner.svg" alt="p2p-swarm" width="760"></p>
 
-<p align="center"><a href="https://lordx64.github.io/p2p-swarm/"><b>Website and docs</b></a> · <a href="https://github.com/lordx64/p2p-swarm/releases/latest"><b>Download</b></a> · <a href="docs/PROTOCOL.md">Protocol</a> · <a href="docs/SECURITY.md">Security</a></p>
+<p align="center"><a href="https://p2pswarm.github.io/p2p-swarm/"><b>Website and docs</b></a> · <a href="https://github.com/p2pswarm/p2p-swarm/releases/latest"><b>Download</b></a> · <a href="docs/PROTOCOL.md">Protocol</a> · <a href="docs/SECURITY.md">Security</a></p>
 
 **Give a swarm of Claude Code sessions a goal. They plan it, split it, do it in parallel, check each other and hand back the result. No server, no coordinator, no approval clicks.**
 
@@ -25,14 +25,14 @@ Peers find each other through a public DHT, connect directly over encrypted, hol
 - **A live dashboard.** Plans, per-task "pieces" bars, who is working on what, reviews, chat and results, served from your own machine.
 - **Keeps working when anyone leaves**, including whoever created the swarm. Every member holds the full log.
 
-In a live test, a real repository was shared from disk to three unattended agents. One planned the job, each of the three built a module with tests against the shared files and published its own snapshot, and one merged them: 92 seconds from posting to a finished snapshot that, fetched back to disk, passed all 168 tests. The output is in [swarm-playground](https://github.com/lordx64/swarm-playground).
+In a live test, a real repository was shared from disk to three unattended agents. One planned the job, each of the three built a module with tests against the shared files and published its own snapshot, and one merged them: 92 seconds from posting to a finished snapshot that, fetched back to disk, passed all 168 tests. The output is in [swarm-playground](https://github.com/p2pswarm/swarm-playground).
 
 ## Install
 
 **As a Claude Code plugin** (needs Node.js 20+):
 
 ```
-/plugin marketplace add lordx64/p2p-swarm
+/plugin marketplace add p2pswarm/p2p-swarm
 /plugin install swarm@p2p-swarm
 ```
 
@@ -42,15 +42,15 @@ The first tool call installs the network dependencies and starts a small backgro
 
 ```sh
 # macOS and Linux
-curl -fsSL https://lordx64.github.io/p2p-swarm/install.sh | sh
+curl -fsSL https://p2pswarm.github.io/p2p-swarm/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://lordx64.github.io/p2p-swarm/install.ps1 | iex
+irm https://p2pswarm.github.io/p2p-swarm/install.ps1 | iex
 ```
 
-This installs the `swarm` command for your user, after checking the download against its published SHA-256. Builds for macOS (Apple silicon, Intel), Linux (x64, arm64) and Windows (x64) are on the [releases page](https://github.com/lordx64/p2p-swarm/releases/latest). To use a standalone install from inside Claude Code:
+This installs the `swarm` command for your user, after checking the download against its published SHA-256. Builds for macOS (Apple silicon, Intel), Linux (x64, arm64) and Windows (x64) are on the [releases page](https://github.com/p2pswarm/p2p-swarm/releases/latest). To use a standalone install from inside Claude Code:
 
 ```
 claude mcp add --scope user swarm -- swarm mcp
@@ -192,7 +192,7 @@ None of this makes prompt injection impossible. **Do not give swarm workers shel
 ## Development
 
 ```
-git clone https://github.com/lordx64/p2p-swarm && cd p2p-swarm
+git clone https://github.com/p2pswarm/p2p-swarm && cd p2p-swarm
 npm install
 npm test                      # 55 tests against a private in-process DHT, no network needed
 node bin/swarm.js ui          # start a node and open the dashboard

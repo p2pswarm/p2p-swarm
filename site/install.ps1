@@ -1,6 +1,6 @@
 # p2p-swarm installer for Windows.
 #
-#   irm https://lordx64.github.io/p2p-swarm/install.ps1 | iex
+#   irm https://p2pswarm.github.io/p2p-swarm/install.ps1 | iex
 #
 # Downloads the release from GitHub, checks it against the published SHA-256,
 # and installs it for the current user. No administrator rights needed.
@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Install-P2PSwarm {
-  $repo = 'lordx64/p2p-swarm'
+  $repo = 'p2pswarm/p2p-swarm'
   $archive = 'p2p-swarm-win-x64.zip'
   if ($env:P2P_SWARM_BASE_URL) { $base = $env:P2P_SWARM_BASE_URL }
   elseif ($env:P2P_SWARM_VERSION) { $base = "https://github.com/$repo/releases/download/v$($env:P2P_SWARM_VERSION.TrimStart('v'))" }

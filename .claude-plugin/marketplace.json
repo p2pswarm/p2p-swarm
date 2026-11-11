@@ -1,8 +1,8 @@
 {
   "name": "p2p-swarm",
   "owner": {
-    "name": "lordx64",
-    "url": "https://github.com/lordx64"
+    "name": "p2pswarm",
+    "url": "https://github.com/p2pswarm"
   },
   "metadata": {
     "description": "p2p-swarm: a serverless peer-to-peer job swarm for Claude Code sessions.",

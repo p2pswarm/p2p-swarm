@@ -30,6 +30,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lordx64/p2p-swarm.git"
+    "url": "git+https://github.com/p2pswarm/p2p-swarm.git"
   }
 }
